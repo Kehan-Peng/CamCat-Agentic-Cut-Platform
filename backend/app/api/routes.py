@@ -1,10 +1,18 @@
 import hashlib
+from dataclasses import replace
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile
 
-from backend.app.domain.models import Video
+from backend.app.domain.models import SearchQuery, Video
 from backend.app.media.mock_pipeline import generate_mock_media_segments
 from backend.app.repositories.in_memory import InMemoryMediaRepository
+from backend.app.retrieval.local_index import LocalMediaIndex
+from backend.app.retrieval.query_rewrite import rewrite_query
+from backend.app.retrieval.rerank import rerank_results
+from backend.app.suggestions.creative import (
+    build_creative_suggestion,
+    build_overall_suggestion,
+)
 
 router = APIRouter()
 repository = InMemoryMediaRepository()
@@ -85,3 +93,41 @@ def get_segment(
         raise HTTPException(status_code=404, detail="Segment not found")
 
     return segment
+
+
+@router.post("/api/v1/search")
+def search_segments(
+    payload: dict,
+    user_id: str = Depends(_require_user_id),
+):
+    query_text = str(payload.get("query_text", "")).strip()
+    if not query_text:
+        raise HTTPException(status_code=400, detail="query_text is required")
+
+    top_k = int(payload.get("top_k", 5))
+    search_query = SearchQuery(
+        query_text=query_text,
+        user_id=user_id,
+        session_id=payload.get("session_id"),
+        top_k=max(1, min(top_k, 20)),
+        filters=payload.get("filters") or {},
+    )
+    query_rewrite = rewrite_query(query_text)
+
+    user_segments = repository.list_segments_for_user(user_id)
+    index = LocalMediaIndex(user_segments)
+    candidate_query = search_query.model_copy(update={"top_k": len(user_segments) or 1})
+    ranked_results = rerank_results(index.search(candidate_query))[: search_query.top_k]
+    ranked_results = [
+        replace(result, creative_suggestion=build_creative_suggestion(result))
+        for result in ranked_results
+    ]
+    overall_suggestion = build_overall_suggestion(ranked_results)
+
+    return {
+        "query_rewrite": query_rewrite.model_dump(),
+        "expanded_queries": query_rewrite.expanded_queries,
+        "results": [result.to_response() for result in ranked_results],
+        "answer": "已按本地片段证据和高光分排序。",
+        "creative_suggestion": overall_suggestion.model_dump(),
+    }

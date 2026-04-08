@@ -33,3 +33,10 @@ class InMemoryMediaRepository:
             for (stored_user_id, _), segment in self._segments.items()
             if stored_user_id == user_id and segment.video_id == video_id
         ]
+
+    def list_segments_for_user(self, user_id: str) -> list[MediaSegment]:
+        return [
+            segment
+            for (stored_user_id, _), segment in self._segments.items()
+            if stored_user_id == user_id
+        ]
