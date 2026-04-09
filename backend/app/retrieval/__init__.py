@@ -1,1 +1,1 @@
-"""Local retrieval utilities for the Phase 1 vertical slice."""
+"""Local retrieval utilities for the Phase 2 retrieval core."""
