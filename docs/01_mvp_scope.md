@@ -1,58 +1,77 @@
 # MVP 范围
 
-## MVP 应包含的能力
+## MVP 定位
 
-MVP 应采用垂直切片，而不是一次性搭建所有模块。第一条可演示链路是：
+Nova 的 MVP 不是“从零自研 Agent Runtime”，而是先打通可演示的媒体理解与检索 vertical slice，再迁移到 LangGraph 编排。MVP 应证明两件事：
+
+1. 长视频可以被转换为可搜索、可解释、可复用、可创作的 MediaSegment。
+2. Query Rewrite、Retrieval、Rerank、Reflection 与 Final Answer 的业务函数已经具备稳定输入输出，能够在 Phase 3 被包装为 LangGraph nodes/tools。
+
+Phase 3 的目标是将这些稳定函数迁移到 LangGraph StateGraph 中执行。
+
+第一条 vertical slice：
 
 ```text
 Upload video
-→ extract frames/audio
-→ ASR/OCR/caption mock or simple implementation
+→ mock/simple media processing
 → build MediaSegment
-→ index into retrieval layer
+→ local hybrid retrieval
 → search by user query
-→ return segments with timestamps and reasons
-````
-
-MVP 包含：
-
-* 通过 API 上传视频文件。
-* 将原始视频存入 MinIO 或本地 MinIO-compatible object storage 抽象。
-* 创建 `Video` 记录，包含 `user_id`、`source_type`、元数据与处理状态。
-* 使用 FFmpeg 抽取音频、代表帧与基础媒体信息。
-* 使用 fixed-window segmentation 作为默认分段策略；Scene Detection 与 Shot Detection 作为可插拔增强。
-* fixed-window segmentation 默认支持固定窗口与可选 overlap，避免场景检测失败导致无法构建片段。
-* 使用 Whisper/faster-whisper、PaddleOCR、caption model 的 adapter 接口；默认使用 deterministic mock adapters，保证 CI 与 TDD 稳定。
-* Frame Caption 在 MVP 中可以默认使用 mock captioner 或人工 fixture captions，不要求接入真实 VLM；真实 VLM-based frame captioning 可在后续通过 adapter 启用。
-* 从 ASR、OCR、frame captions、tags、motion score、highlight score 与 metadata 构建 `MediaSegment`。
-* 为片段生成 text embedding 与 visual embedding；默认 mock embedding，可替换为 bge-m3、jina-embeddings-v3、CLIP 或 SigLIP。
-* 检索层应通过 `VectorIndex` adapter 屏蔽底层向量库实现。
-* Unit tests 与 CI 默认使用 in-memory vector index。
-* 本地 Demo 可接入 Milvus 或 Qdrant。
-* Milvus 作为后续生产化优先选项。
-* 支持 BM25、Dense Retrieval、Hybrid Search、Metadata Filtering 与简单 Rerank。
-* 支持 Agentic Search：Query Rewrite、Multi-hop Retrieval、Hybrid Fusion、Rerank、Evidence Grounding、Creative Suggestion、Optional Reflection 与 Structured Answer。
-* MVP 阶段不实现完全自主多 Agent 行为。
-* MVP 阶段的 Agentic Search 应采用 deterministic planner 与固定工具链，优先保证稳定性与可测试性。
-* Agentic Search 的默认执行链路为：
-
-```text
-Query Rewrite
-→ Multi-hop Retrieval
-→ Hybrid Fusion
-→ Rerank
-→ Evidence Grounding
-→ Creative Suggestion
-→ Optional Reflection
-→ Structured Answer
+→ return ranked segments with timestamps, evidence reasons, and creative suggestions
 ```
 
-* 跟踪 upload-to-index workflow 的任务状态、错误信息与重试。
-* 为后续前端提供 upload、workflow status、search 与 segment detail API。
+Phase 3 开始，`POST /api/v1/search/agentic` 的内部执行应迁移为 LangGraph `StateGraph`。
 
-## MVP 中的 ToC 范围
+## MVP 应包含的能力
 
-ToC Demo 查询使用：
+### MediaSegment 与多模态 Pipeline
+
+* 上传视频并创建 `Video` 记录。
+* 使用 deterministic mock adapters 或轻量 adapter 生成 ASR、OCR、frame captions、tags、motion_score、highlight_score。
+* 构建 `MediaSegment` 与 `SegmentEvidence`。
+* 预留 ASR/OCR/Caption/Embedding/Scene/Shot/Motion/Highlight adapters，后续可替换为 Whisper、PaddleOCR、VLM、bge-m3、CLIP/SigLIP、PySceneDetect。
+* 保证默认测试路径轻量、确定性、无需 GPU 和外部模型服务。
+
+### Retrieval Engine
+
+* Python BM25 / lightweight lexical retrieval。
+* Deterministic local dense embedding stub。
+* Metadata filtering。
+* Hybrid score fusion。
+* Rule-based rerank。
+* Evidence-based reason generation。
+* Evaluation utilities：recall@k、MRR、nDCG。
+* Milvus/Qdrant/OpenSearch 作为未来替换选项，不是 MVP 必需运行依赖。
+
+### Agentic Search
+
+MVP 先允许 deterministic implementation，但目标结构必须对齐 LangGraph：
+
+```text
+AgentState
+→ QueryRewriteNode
+→ RetrievalNode
+→ RerankNode
+→ CreativeSuggestionNode
+→ ReflectionNode
+→ FinalAnswerNode
+```
+
+Phase 3 迁移后，`/api/v1/search/agentic` 应由 LangGraph workflow 内部执行，并返回 `graph_run_id`、`thread_id`、`state_snapshot` 与 `node_trace`。
+
+### API
+
+* `POST /api/v1/videos`
+* `GET /api/v1/videos/{video_id}`
+* `GET /api/v1/segments/{segment_id}`
+* `POST /api/v1/search`
+* `POST /api/v1/search/agentic`
+
+`POST /api/v1/search` 保持普通检索兼容；`POST /api/v1/search/agentic` 表达 LangGraph agentic workflow 语义。
+
+## ToC MVP 范围
+
+Demo query：
 
 ```text
 帮我找适合做热血卡点的视频素材
@@ -61,59 +80,58 @@ ToC Demo 查询使用：
 系统应返回：
 
 * 推荐 `MediaSegment`。
-* `start_time` 与 `end_time`。
-* 推荐理由。
-* 证据来源，例如 `asr_chunks`、`ocr_blocks`、`caption_frames`、`tags`、`motion_score` 与 `highlight_score`。
-* 推荐 BGM 风格与转场建议。
-* 可选剪辑脚本。
+* `start_time` / `end_time`。
+* 中文推荐理由。
+* grounded evidence。
+* 推荐 BGM 风格、转场建议、剪辑 notes。
+* Phase 1/2 返回 deterministic tool trace；Phase 3 迁移后返回 LangGraph node_trace / state_snapshot。
 
-## MVP 中的 ToB 降级策略
+## ToB MVP 降级策略
 
-ToB Demo 查询使用：
+Demo query：
 
 ```text
-分析今天直播录屏并生成高转化切片
+自动分析今天直播录屏并生成高转化切片
 ```
 
-MVP 不要求真实企业级商品识别。可使用：
+MVP 使用：
 
 * ASR keywords。
 * OCR keywords。
 * frame captions。
 * rule-based matching。
 * mock product catalog。
-* 手工配置的 product dictionary。
+* 手工配置 product dictionary。
 
-生产级 SKU recognition、商品图像检测、跨品牌商品归一化、企业商品库同步与高精度转化预测全部推迟。
+推迟：
+
+* 生产级 SKU recognition。
+* 企业商品库同步。
+* 复杂商品视觉检测。
+* 高精度转化预测。
+* 企业权限、审计、审批流。
 
 ## 暂缓内容
 
-以下能力推迟到 MVP 之后：
-
-* 真实多 Agent 自主协作。
-* 复杂 Reflection loop。
-* 实时直播流处理。
-* 生产级模型服务与 GPU 调度。
-* 将 OpenSearch 纳入 MVP 运行依赖；MVP 使用 Python BM25 或轻量 lexical index，OpenSearch 作为未来替换选项。
-* 完整 observability dashboard。
-* 自动剪辑渲染与导出。
-* 企业权限、审计、计费、资产审批流。
+* 完整 LangGraph checkpoint 持久化可在 Phase 3 后半段完成。
+* Celery/Redis 重型异步媒体任务在 Phase 4 引入。
+* Milvus/Qdrant/OpenSearch 在 Phase 4 引入。
+* vLLM/SGLang、真实 Whisper、PaddleOCR、CLIP/SigLIP 不作为默认测试依赖。
+* 前端与完整剪辑器不属于当前 MVP 核心。
 
 ## MVP 成功标准
 
 用户成功标准：
 
-* 用户能上传一个短视频并看到 workflow 进度。
-* 用户能搜索 `帮我找适合做热血卡点的视频素材`。
-* 当索引中存在足够匹配候选时，系统至少返回 5 个排序后的片段候选。
-* 如果匹配候选不足 5 个，系统应返回全部可用候选，并在响应中说明候选不足的原因。
-* 每个结果包含 `video_id`、`segment_id`、`start_time`、`end_time`、证据、标签、分数与中文推荐理由。
-* 支持按 `video_id`、`source_type`、`tags`、`min_highlight_score` 等 metadata filters 搜索。
-* 失败任务可以重试，并保留结构化错误信息。
+* 用户能上传视频并生成多个 `MediaSegment`。
+* 用户能搜索“帮我找适合做热血卡点的视频素材”。
+* 系统返回排序片段、时间戳、证据、推荐理由和创作建议。
+* Agentic Search 响应体现 query rewrite、retrieval、rerank、reflection 与 final answer。
+* 多用户访问隔离正确。
 
 工程成功标准：
 
-* 第一条垂直切片有 unit tests 与 integration tests。
-* 所有模型能力都通过 adapter 暴露，并默认支持 deterministic mock mode。
-* `MediaSegment` 是 ingestion、retrieval、agent 与 API 的共享契约。
-* 评估脚本能计算 recall@k、nDCG、MRR、latency 与基础 retrieval accuracy。
+* 所有核心能力有 deterministic tests。
+* `MediaSegment` 是 ingestion、retrieval、agent、API 的共享契约。
+* Retrieval evaluation 能计算 recall@k、MRR、nDCG。
+* Phase 3 LangGraph migration 有明确路径：现有函数被包装成 nodes/tools，而不是继续扩展自研 runtime。

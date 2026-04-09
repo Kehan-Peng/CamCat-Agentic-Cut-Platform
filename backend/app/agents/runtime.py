@@ -1,3 +1,5 @@
+"""Legacy compatibility layer for the pre-LangGraph deterministic agent runtime."""
+
 from dataclasses import replace
 from typing import Any
 
