@@ -165,10 +165,19 @@ def _build_final_answer(results: list[Any]) -> str:
         (
             f"{result.segment_id} from video {result.video_id} covers "
             f"{result.start_time:.2f}-{result.end_time:.2f}s because {result.reason}"
+            f" Evidence: {_first_evidence_text(result)}"
         )
         for result in results
     ]
     return f"Found {len(results)} segment(s): " + "; ".join(grounded_results)
+
+
+def _first_evidence_text(result: Any) -> str:
+    for evidence in getattr(result, "evidence", []) or []:
+        text = getattr(evidence, "text", "")
+        if text:
+            return text
+    return "No evidence text available."
 
 
 def _trace_output(output: Any) -> Any:
