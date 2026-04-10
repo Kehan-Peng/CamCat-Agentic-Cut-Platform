@@ -4,12 +4,29 @@
 
 一个**基于 LangGraph 的 Agentic Workflow 系统**，面向多模态内容搜索、视频片段检索、证据校验、编辑状态规划和创意视频生成。
 
----
+## 项目概览
+
+Nova AI-Cut Agent Platform 能够支持：
+
+- 上传视频并触发媒体处理工作流。
+- 从 ASR、OCR、Caption、Embedding、Metadata 中构建可检索片段。
+- 使用 Hybrid Retrieval 检索视频片段。
+- 使用 LangGraph Coordinator Graph 编排 Query Rewrite、Retrieval、Rerank、Evidence Grounding、Editing Planning、Render Control。
+- 通过自然语言生成或修改视频剪辑计划。
+- 使用最小 EditingStatePatch 更新编辑状态，而不是每轮对话重新生成完整计划。
+- 通过 Celery / Redis 执行重型媒体任务和渲染任务。
+- 使用 MinIO 存储原始视频、中间制品和导出结果。
+- 使用 OpenSearch + Qdrant / Milvus 提供生产级全文检索和向量检索。
+- 使用外部 LLM API，例如 OpenAI / DeepSeek / OpenAI-compatible 服务，完成复杂 Agent 推理任务。
+
+
+## 演示预览
+
+<img width="1672" height="941" alt="Nova AI-Cut Agent Platform Preview" src="https://github.com/user-attachments/assets/b6069057-c1a9-48b3-919a-aea26a1c462b" />
+
+
 
 ## 目录
-
-- [项目概览](#项目概览)
-- [演示预览](#演示预览)
 - [项目定位](#项目定位)
 - [核心能力](#核心能力)
 - [系统架构](#系统架构)
@@ -33,32 +50,6 @@
 - [项目价值](#项目价值)
 - [License](#license)
 
----
-
-## 项目概览
-
-Nova AI-Cut Agent Platform 将长视频、直播回放、游戏集锦等非结构化媒体内容转换为可检索、可解释、可编辑、可导出的结构化媒体智能资产。
-
-系统支持：
-
-- 上传视频并触发媒体处理工作流。
-- 从 ASR、OCR、Caption、Embedding、Metadata 中构建可检索片段。
-- 使用 Hybrid Retrieval 检索视频片段。
-- 使用 LangGraph Coordinator Graph 编排 Query Rewrite、Retrieval、Rerank、Evidence Grounding、Editing Planning、Render Control。
-- 通过自然语言生成或修改视频剪辑计划。
-- 使用最小 EditingStatePatch 更新编辑状态，而不是每轮对话重新生成完整计划。
-- 通过 Celery / Redis 执行重型媒体任务和渲染任务。
-- 使用 MinIO 存储原始视频、中间制品和导出结果。
-- 使用 OpenSearch + Qdrant / Milvus 提供生产级全文检索和向量检索。
-- 使用外部 LLM API，例如 OpenAI / DeepSeek / OpenAI-compatible 服务，完成复杂 Agent 推理任务。
-
----
-
-## 演示预览
-
-<img width="1672" height="941" alt="Nova AI-Cut Agent Platform Preview" src="https://github.com/user-attachments/assets/b6069057-c1a9-48b3-919a-aea26a1c462b" />
-
----
 
 ## 项目定位
 
@@ -77,7 +68,7 @@ Nova 融合了两个方向：
 
 顶层协调器是 **LangGraph Coordinator Graph**。领域能力组织为 subgraphs、nodes、tools 和确定性服务。
 
----
+
 
 ## 核心能力
 
@@ -134,7 +125,7 @@ Nova 融合了两个方向：
 - Structured output parsing
 - Provider error normalization
 
----
+
 
 ## 系统架构
 
@@ -188,8 +179,6 @@ Nova LangGraph Coordinator Graph
 └── Final Response Assembly
 ````
 
----
-
 ## 外部确定性服务
 
 ### Editing Execution Service
@@ -214,7 +203,6 @@ LangGraph 只负责：
 
 LangGraph 不得在 graph node 内直接执行 FFmpeg。
 
----
 
 ## Media Processing Workflow DAG
 
@@ -242,7 +230,6 @@ Media Processing Workflow DAG
 * `VisualEmbeddingTask` 依赖代表帧。
 * `IndexingTask` 依赖 segment、embeddings 和 metadata。
 
----
 
 ## 状态持久化层
 
@@ -283,7 +270,7 @@ backend/app/agents/state.py
 * RenderJob
 * MediaWorkflowRun
 
----
+
 
 ## 复合路由机制
 
@@ -369,8 +356,6 @@ Perception & Retrieval Subgraph
 → FinalResponseNode
 ```
 
----
-
 ## 核心设计原则
 
 ### 1. LangGraph 是编排层
@@ -385,7 +370,7 @@ LangGraph 负责：
 
 LangGraph 不负责重写检索、媒体处理或渲染逻辑。每个 node 读写 `AgentState`，然后调用领域服务。
 
----
+
 
 ### 2. 检索质量必须量化
 
@@ -394,7 +379,7 @@ LangGraph 不负责重写检索、媒体处理或渲染逻辑。每个 node 读�
 * `SearchQualityCheckNode` 执行量化质量评估。
 * `ConditionalRetryOrFinalize` 执行有界重试或返回 best-effort 结果。
 
----
+
 
 ### 3. 编辑更新必须基于 patch
 
@@ -407,7 +392,7 @@ LangGraph 不负责重写检索、媒体处理或渲染逻辑。每个 node 读�
 * `ArtifactRefreshPlannerNode` 决定哪些制品需要刷新。
 * `EditingStateUpdateNode` 通过版本检查原子提交更新。
 
----
+
 
 ### 4. 渲染是确定性执行，不是 Agent 推理
 
@@ -415,7 +400,7 @@ FFmpeg 渲染、输出验证、元数据写入和沙箱执行属于 Editing Exec
 
 LangGraph 可以触发渲染作业、检查渲染状态和总结结果，但不得在 agent graph 中直接执行 FFmpeg。
 
----
+
 
 ### 5. 重型媒体处理是 DAG
 
@@ -425,7 +410,7 @@ LangGraph 可以触发渲染作业、检查渲染状态和总结结果，但不�
 ASR 不得在音频提取之前运行。
 OCR 和字幕不得在帧提取之前运行。
 
----
+
 
 ## MediaReadinessNode 重路由机制
 
@@ -441,9 +426,8 @@ MediaReadinessNode
 → Media Workflow Control Nodes
 ```
 
-这样可以避免子图内部越权调用 Coordinator 层节点，保持架构分层清晰。
+避免子图内部越权调用 Coordinator 层节点，保持架构分层清晰。
 
----
 
 ## Editing Planning 并行语义
 
@@ -482,7 +466,6 @@ backend/app/agents/editing_planning/planning_artifact_join.py
 tests/test_planning_artifact_fork_join.py
 ```
 
----
 
 ## 状态冲突恢复
 
@@ -508,7 +491,7 @@ state_conflict
 * 安全 rebase 可以自动重试。
 * 不安全冲突必须返回 `clarification_required` 或要求用户确认。
 
----
+
 
 ## 开发路线
 
@@ -611,7 +594,6 @@ TDD 覆盖：
 * 无界重试防护测试。
 * 文档和 API 示例收口。
 
----
 
 ## 生产基础设施路线
 
@@ -669,7 +651,6 @@ Nova 正在向生产级 Agentic Multimodal Search & Creation Platform 演进。
   * provider_integration
   * production_e2e
 
----
 
 ## 生产架构
 
@@ -704,7 +685,7 @@ Nova 正在向生产级 Agentic Multimodal Search & Creation Platform 演进。
                     └──────────────┘
 ```
 
----
+
 
 ## 快速开始
 
@@ -756,7 +737,6 @@ conda run -n nova uvicorn backend.app.main:app --reload
 conda run -n nova uvicorn backend.app.main:app --reload --port 8000
 ```
 
----
 
 ## 生产环境启动
 
@@ -808,7 +788,7 @@ uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
 make verify-production
 ```
 
----
+
 
 ## API 概览
 
@@ -828,8 +808,6 @@ Request:
   }
 }
 ```
-
----
 
 ### POST `/api/v1/search/agentic`
 
@@ -878,7 +856,6 @@ Response:
 }
 ```
 
----
 
 ### POST `/api/v1/videos`
 
@@ -907,7 +884,6 @@ Response:
 }
 ```
 
----
 
 ## 测试
 
@@ -957,7 +933,7 @@ production_e2e
 slow
 ```
 
----
+
 
 ## 文档
 
@@ -983,8 +959,6 @@ docs/06_tdd_plan.md
 docs/07_implementation_plan.md
 ```
 
----
-
 ## 开发规则
 
 使用 AI coding agents 或 Superpowers-style development 时：
@@ -1005,8 +979,6 @@ docs/07_implementation_plan.md
 14. 每个任务后运行完整测试。
 15. 不提交 API keys、secrets、provider tokens 或私有凭证。
 
----
-
 ## 项目概述
 
 * 基于 LangGraph 的生产级 Agent 编排。
@@ -1021,7 +993,6 @@ docs/07_implementation_plan.md
 * ModelGateway 支撑 OpenAI / DeepSeek / OpenAI-compatible 外部模型服务。
 * 可观测与可评估：`node_trace`、`AgentState` snapshot、`GraphRun`、workflow status、production verification。
 
----
 
 ## License
 
