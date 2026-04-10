@@ -2,26 +2,27 @@
 
 Nova Agent Platform 是一个**基于 LangGraph 的 Agentic Workflow 系统**，用于多模态内容搜索、检索、编辑规划和创意视频生成。
 
-本项目不是通用的视频工具聊天包装器，也不是一次性的视频搜索演示。核心工程重点是设计面向生产的 Agent Workflows，协调检索、证据校验、编辑状态变更和安全的视频导出。
+本项目核心工程重点是设计面向生产的 Agent Workflows，协调检索、证据校验、编辑状态变更和安全的视频导出。
 
 ## 项目定位
 
 系统融合两个原型方向：
 
-1. 多模态搜索、混合检索、证据校验的答案生成和基于 LangGraph 的 Agentic Search。
-2. 编辑状态驱动的对话式编辑模型，用户对话变更持久化的编辑制品，而不是盲目重新生成整个视频计划。
+1. 基于 LangGraph 的多模态 Agentic Search。
+2. 自然语言对话驱动的视频编辑模型。
 
-### 与 VideoCutGPT 的关系
+<img width="1672" height="941" alt="Image26:5:10" src="https://github.com/user-attachments/assets/b6069057-c1a9-48b3-919a-aea26a1c462b" />
 
-- **位置**：`/Users/pengkehan/VideoCutGPT`
-- **用途**：只读参考编辑状态、工作流制品、剪辑计划、渲染流程和对话式剪辑状态管理。
-- **约束**：不修改原项目；不盲目复制大段代码；优先迁移可复用设计和最小必要实现。
+### 参考项目 VideoCutGPT
 
-最终架构不应过度使用 “Lead Agent” 或 “多智能体组” 术语。顶层协调器是 **LangGraph Coordinator Graph**。领域能力组织为 subgraphs、nodes、tools 和确定性服务。
+- **用途**：参考编辑状态、工作流制品、剪辑计划、渲染流程和对话式剪辑状态管理。
+- **约束**：不修改原项目；不复制代码；优先迁移可复用设计和最小必要实现。
+
+顶层协调器是 **LangGraph Coordinator Graph**。领域能力组织为 subgraphs、nodes、tools 和确定性服务。
 
 ## 核心架构
 
-Nova 的核心研发重点是 **Agent 编排**，而非媒体数据建模。
+Nova 的核心研发重点是 **Agent 编排**。
 
 ```text
 Nova LangGraph Coordinator Graph
