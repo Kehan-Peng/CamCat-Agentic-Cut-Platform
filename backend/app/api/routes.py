@@ -174,25 +174,25 @@ def agentic_search_segments(
         build_agent_graph(user_segments, checkpointer=agent_checkpointer),
         state,
     )
-    creative_suggestion = _first_creative_suggestion(final_state.creative_suggestions)
-    reranked_segments = _serialize_results(final_state.reranked_segments)
+    creative_suggestion = _first_creative_suggestion(final_state.get("creative_suggestions", []))
+    reranked_segments = _serialize_results(final_state.get("reranked_segments", []))
 
     return {
         "plan": SearchPlanner().plan(search_query).model_dump(),
-        "rewritten_query": final_state.rewritten_query,
-        "tool_trace": _compat_tool_trace(final_state.node_trace),
+        "rewritten_query": final_state.get("rewritten_query"),
+        "tool_trace": _compat_tool_trace(final_state.get("node_trace", [])),
         "ranked_segments": reranked_segments,
-        "reflection": final_state.reflection_result,
-        "final_answer": final_state.final_answer,
+        "reflection": final_state.get("reflection_result"),
+        "final_answer": final_state.get("final_answer"),
         "creative_suggestion": creative_suggestion,
-        "graph_run_id": final_state.graph_run_id,
-        "thread_id": final_state.thread_id,
+        "graph_run_id": final_state.get("graph_run_id"),
+        "thread_id": final_state.get("thread_id"),
         "state_snapshot": _state_snapshot(final_state),
-        "node_trace": final_state.node_trace,
-        "retrieved_segments": _serialize_results(final_state.retrieved_segments),
+        "node_trace": final_state.get("node_trace", []),
+        "retrieved_segments": _serialize_results(final_state.get("retrieved_segments", [])),
         "reranked_segments": reranked_segments,
-        "reflection_result": final_state.reflection_result,
-        "creative_suggestions": final_state.creative_suggestions,
+        "reflection_result": final_state.get("reflection_result"),
+        "creative_suggestions": final_state.get("creative_suggestions", []),
     }
 
 
@@ -205,9 +205,9 @@ def _first_creative_suggestion(suggestions: list) -> dict | None:
 
 
 def _state_snapshot(state: AgentState) -> dict:
-    snapshot = state.model_dump(exclude={"retrieved_segments", "reranked_segments"})
-    snapshot["retrieved_segments"] = _serialize_results(state.retrieved_segments)
-    snapshot["reranked_segments"] = _serialize_results(state.reranked_segments)
+    snapshot = dict(state)
+    snapshot["retrieved_segments"] = _serialize_results(state.get("retrieved_segments", []))
+    snapshot["reranked_segments"] = _serialize_results(state.get("reranked_segments", []))
     return snapshot
 
 

@@ -17,9 +17,9 @@ def test_graph_invocation_uses_state_thread_id_for_checkpoint_config():
     result = invoke_agent_graph(graph, state)
     snapshot = graph.get_state({"configurable": {"thread_id": "thread-checkpoint-1"}})
 
-    assert result.thread_id == "thread-checkpoint-1"
+    assert result["thread_id"] == "thread-checkpoint-1"
     assert snapshot.values["thread_id"] == "thread-checkpoint-1"
-    assert snapshot.values["final_answer"] == result.final_answer
+    assert snapshot.values["final_answer"] == result["final_answer"]
 
 
 def test_graph_invocation_allows_explicit_thread_config_override():

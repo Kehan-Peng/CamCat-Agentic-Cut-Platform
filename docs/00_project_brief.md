@@ -1,116 +1,156 @@
 # Nova Agent Platform 项目简介
 
-## 项目目标
+## 项目定位
 
-Nova Agent Platform 是一个 **基于 LangGraph 的 Agentic Multimodal Media Intelligence Platform**，面向视频素材理解、片段级检索、高光定位和创作建议生成。系统将多模态处理、Hybrid Retrieval、Rerank、Evidence Grounding 封装为 LangGraph nodes/tools，通过 `AgentState` 与 `StateGraph` 编排 Query Rewrite、Retrieval、Rerank、Creative Suggestion、Reflection 与 Final Answer 生成。
+Nova Agent Platform 是一个 **基于 LangGraph 的 Agentic Workflow 系统**，用于多模态内容搜索、检索、编辑规划和创意视频生成。
 
-Nova 的核心卖点不再是“自研 Agent 框架”，而是：
+本项目不是通用的视频工具聊天包装器，也不是一次性的视频搜索演示。核心工程重点是设计面向生产的 Agent Workflows，协调检索、证据校验、编辑状态变更和安全的视频导出。
 
-```text
-基于 LangGraph 做业务化二次开发，把视频理解和检索能力封装成可编排 Agent Workflow。
-```
+系统融合了两个原型方向：
 
-项目的工程定位是：
+1. **Nova** 提供多模态搜索、混合检索、证据校验的答案生成和基于 LangGraph 的 Agentic Search。
+2. **VideoCutGPT** 贡献了编辑状态驱动的对话式编辑模型，用户对话变更持久化的编辑制品，而不是盲目重新生成整个视频计划。
 
-* 用 LangGraph 构建 Agent Orchestration Layer，将 Query Rewrite、Retrieval、Rerank、Creative Suggestion、Reflection 与 Final Answer 组织成可追踪 workflow。
-* `MediaSegment` 是视频场景下的领域数据载体，用于承接多模态证据和检索结果。
-* 用 Retrieval Engine 承载 BM25、Dense Retrieval、Metadata Filtering、Hybrid Fusion 与 Rerank。
-* 用 Multimodal Pipeline 承载 ASR、OCR、Frame Caption、Scene/Shot Detection、Embedding 与 Highlight Scoring。
-* 用 FastAPI 提供 API 层，后续用 Celery/Redis 承载重型媒体处理任务。
+最终架构不应过度使用”Lead Agent”或”多智能体组”术语。顶层协调器是 **LangGraph Coordinator Graph**。领域能力组织为 subgraphs、nodes、tools 和确定性服务。
+
+## 核心架构
+
+Nova 的核心研发重点是 **Agent 编排**，而非媒体数据建模。系统架构包括：
+
+* **LangGraph Coordinator Graph**：顶层意图路由和状态转换
+* **Intent Routing Layer**：意图分类和路由决策
+* **Perception & Retrieval Subgraph**：多模态搜索和检索（8 个节点）
+* **Editing Planning Subgraph**：编辑规划和状态变更（11 个节点）
+* **Media Workflow Control Nodes**：触发和监控外部媒体处理
+* **Export / Render Control Nodes**：渲染就绪检查和结果读取
+* **Final Response Assembly**：最终响应组装
+* **Editing Execution Service**（外部/非 Agent）：确定性渲染服务
+* **Media Processing Workflow DAG**：重型媒体处理工作流
+* **State Persistence Layer**：持久化状态管理
 
 长视频、直播录屏和游戏高光素材都应被转换成可搜索、可解释、可复用、可创作的 `MediaSegment` 单元。每个 `MediaSegment` 保存时间边界、ASR 文本、OCR 文本、画面描述、标签、embedding 引用、运动分数、高光分数、元数据与 grounded evidence。
 
-## 用户场景
+## 关键设计约束
 
-### 场景 1：ToC AI Content Search Assistant
+### 复合路由机制
 
-对标产品与场景包括 CapCut / 剪映、腾讯 IEG 内容工具、Insta360 / 影石内容工具、游戏集锦创作工具与短视频素材管理工具。
-
-Demo 输入：
+Coordinator Graph 必须支持复合意图路由，例如：
 
 ```text
-帮我找适合做热血卡点的视频素材
+帮我找热血片段，并剪成 30 秒短视频
 ```
 
-LangGraph workflow 应执行：
+应路由为：
 
 ```text
-User Query
-→ QueryRewriteNode
-→ RetrievalNode
-→ RerankNode
-→ CreativeSuggestionNode
-→ ReflectionNode
-→ FinalAnswerNode
+Perception & Retrieval Subgraph
+→ Editing Planning Subgraph
+→ FinalResponseNode
 ```
 
-`QueryRewriteNode` 应将意图扩展为：热血、燃系、高能、快节奏、镜头切换明显、动作强、beat 匹配、团战、冲刺、反击、高潮片段。
+复合路由必须使用显式的 RouteSequenceControllerNode，而不是强制单一意图路由。
 
-期望输出：
+### MediaReadinessNode 重路由机制
 
-* 推荐 `MediaSegment` 与 `start_time` / `end_time`。
-* 高能片段、动作强片段、镜头切换明显片段。
-* 基于 ASR、OCR、frame captions、tags、motion_score、highlight_score 的推荐理由。
-* 推荐 BGM 风格、BPM 范围、转场建议与可选剪辑脚本。
-* `node_trace` 与 `reflection_result`，用于展示 Agent Workflow 的可解释执行过程。
+MediaReadinessNode **不得直接调用** Media Workflow Control Nodes。
 
-### 场景 2：ToB AI Media Workflow Copilot
+正确流程：
+1. MediaReadinessNode 检查媒体就绪状态
+2. 如果未就绪，写入 `route_request` / `readiness status` 到 AgentState
+3. 让 Coordinator Graph 重新路由到 Media Workflow Control Nodes
 
-对标场景包括企业 AI workflow agent、内容审核、素材管理、直播分析、营销素材生产和企业媒体资产自动分类。
+### PlanDiffNode 语义
 
-Demo 输入：
+PlanDiffNode 必须生成 **最小 state patch**，而非全量重生成。
+
+只有在用户明确要求"全部重来"时，才允许完整重新生成编辑计划。
+
+### 渲染执行边界
+
+**重度媒体处理和渲染不得直接在 LangGraph nodes 内运行。**
+
+LangGraph nodes 可以：
+- 触发外部 workflows/services
+- 轮询状态
+- 总结结果
+
+但不能：
+- 直接执行 FFmpeg
+- 运行 ASR/OCR/Embedding
+- 执行长时间媒体处理
+
+## Perception & Retrieval Subgraph（8 个节点）
+
+1. **MediaReadinessNode**：检查媒体是否已处理并可搜索
+2. **QueryRewriteNode**：查询改写和意图扩展
+3. **HybridRetrievalNode**：BM25 + Dense + Metadata 混合检索
+4. **CandidateEvidenceAttachNode**：附加证据到候选结果
+5. **RerankNode**：重排序候选结果
+6. **FinalEvidenceGroundingNode**：最终证据校验
+7. **SearchQualityCheckNode**：量化质量评估
+8. **ConditionalRetryOrFinalize**：有界重试或完成
+
+## Editing Planning Subgraph（11 个节点）
+
+1. **IntentToEditTaskNode**：意图转换为编辑任务
+2. **EditingStateReadNode**：读取编辑状态
+3. **SegmentSelectionNode**：选择片段
+4. **PlanDiffNode**：生成最小 state patch
+5. **PatchValidationNode**：验证 patch
+6. **SubtitleDraftNode**：字幕草稿生成
+7. **ClipPlanNode**：剪辑计划生成
+8. **TitleTagNode**：标题和标签生成
+9. **ArtifactRefreshPlannerNode**：制品刷新规划
+10. **EditingPlanValidationNode**：编辑计划验证
+11. **EditingStateUpdateNode**：原子提交 + 版本检查
+
+## Media Processing Workflow DAG
 
 ```text
-自动分析今天直播录屏并生成高转化切片
+Upload / StoreOriginal
+        ↓
+MetadataExtractionTask
+        ↓
+ ┌───────────────┬─────────────────┐
+ │               │                 │
+AudioExtraction  FrameExtraction   SceneShotDetection
+ │               │                 │
+ASRTask          OCRTask            SegmentBoundaryTask
+                 CaptionTask        │
+ │               │                 │
+ └───────────────┴───────────────┬─┘
+                                 ↓
+                         SegmentBuilderTask
+                                 ↓
+              ┌──────────────────┴──────────────────┐
+              │                                     │
+        TextEmbeddingTask                    VisualEmbeddingTask
+              │                                     │
+              └──────────────────┬──────────────────┘
+                                 ↓
+                         IndexingTask
+                                 ↓
+                         SearchableStatusTask
 ```
 
-MVP 不要求真实企业级商品识别。可使用 ASR keywords、OCR keywords、frame captions、rule-based matching、mock product catalog 与手工配置 product dictionary。生产级 SKU recognition、企业商品库同步、复杂视觉商品检测和高精度转化预测后置。
-
-期望输出：
-
-* 候选短视频 `ClipCandidate`。
-* 商品提及、价格/优惠信息、主播话术与互动证据。
-* 自动分类、自动标签、直播摘要、标题建议、封面文案与剪辑建议。
-* LangGraph `graph_run_id`、`thread_id`、`state_snapshot` 与 `node_trace`，便于复盘和调试。
-
-## 核心平台层
-
-Nova 由五个清晰平台层组成：
-
-* API Layer：FastAPI，提供 upload、search、agentic search、segment detail、workflow status 等接口。
-* Agent Orchestration Layer：LangGraph，负责 `AgentState`、`StateGraph`、nodes/tools、checkpointer、thread state 与 trace。
-* Multimodal Pipeline：ASR Adapter、OCR Adapter、Caption Adapter、Embedding Adapter、Scene/Shot Adapter、Motion/Highlight Adapter。
-* Retrieval Engine：BM25、Dense Retrieval、Metadata Filtering、Hybrid Fusion、Rerank、Evidence Grounding。
-* Storage / Workflow Layer：Metadata DB、Object Storage、Vector DB；重型媒体任务后续由 Celery/Redis 执行。
-
-LangGraph 放在 Agent Orchestration Layer。它不替代 Retrieval Engine、Multimodal Pipeline、Storage 或重型异步任务系统，而是编排这些能力。
+依赖关系：
+- ASRTask 依赖 AudioExtractionTask
+- OCRTask 和 CaptionTask 依赖 FrameExtractionTask
+- SegmentBuilderTask 依赖 ASR/OCR/Caption/SceneShot 可用性
+- TextEmbeddingTask 依赖 segment text
+- VisualEmbeddingTask 依赖代表帧
+- IndexingTask 依赖 segment + embeddings + metadata
 
 ## 核心价值主张
 
-Nova 的价值是把不可直接操作的长视频转换成结构化媒体智能资产，并通过 LangGraph workflow 将查询理解、检索、重排、证据校验和创作建议串成可追踪、可测试、可扩展的 Agentic Workflow。
+Nova 的价值是将不可直接操作的长视频转换成结构化媒体智能资产，并通过 LangGraph workflow 将查询理解、检索、编辑规划、证据校验和创作建议串成可追踪、可测试、可扩展的 Agentic Workflow。
 
 核心价值包括：
 
-* 基于 `MediaSegment` 的片段级多模态理解。
-* 基于 BM25 + dense + metadata + rerank 的多模态 Hybrid Retrieval。
-* 基于 LangGraph 的 Agentic Search，而不是手写不可扩展的自研 Runtime。
-* Evidence Grounding，确保推荐理由只引用真实证据。
-* 创作导向输出：BGM、转场、脚本、标题、封面文案。
-* ToC 与 ToB 共用同一套媒体理解、检索和 Agent Workflow 底座。
-* 可观测与可评估：`node_trace`、`AgentState` snapshot、recall@k、MRR、nDCG、task success rate、tool accuracy、latency。
-
-## MVP 非目标
-
-MVP 与近期路线不做：
-
-* 完整视频剪辑器时间线。
-* 生产级 SKU recognition 与企业商品库匹配。
-* 实时直播流处理。
-* 大规模分布式视频处理集群。
-* vLLM/SGLang 生产部署。
-* Milvus/Qdrant/OpenSearch 作为必须运行依赖。
-* 完整 Prometheus/Grafana/OpenTelemetry dashboard。
-* 全自动成片渲染。
-* 复杂长期记忆系统，例如长期用户偏好画像、跨会话 vector memory、自动个性化策略；Phase 3 仅支持 LangGraph thread/checkpoint 级别的轻量状态延续。
-
-Phase 1/2 保留 deterministic local implementation 作为可测试垂直切片；Phase 3 将 Agentic Search 内部执行迁移到 LangGraph，用 AgentState 与 StateGraph 替换自研 agent execution path，并将现有 query rewrite、retrieval、rerank、creative suggestion、reflection 封装为 LangGraph nodes/tools。
+* 基于 LangGraph 的生产级 Agent 编排，而非自研框架
+* 复合意图路由和状态驱动的编辑规划
+* 量化的检索质量评估和有界重试策略
+* 最小 patch 驱动的编辑状态变更
+* 外部确定性服务处理渲染和重型媒体处理
+* Evidence Grounding，确保推荐理由只引用真实证据
+* 可观测与可评估：`node_trace`、`AgentState` snapshot、`GraphRun` 记录
