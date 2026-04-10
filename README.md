@@ -1,4 +1,4 @@
-# Nova Agent Platform
+# Nova AI-Cut Agent Platform
 
 Nova Agent Platform 是一个**基于 LangGraph 的 Agentic Workflow 系统**，用于多模态内容搜索、检索、编辑规划和创意视频生成。
 
