@@ -1,0 +1,20 @@
+[project]
+name = "nova-backend"
+version = "0.1.0"
+description = "Minimal Nova Agent Platform backend skeleton."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "pydantic",
+    "uvicorn",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "httpx",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
