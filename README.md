@@ -1,54 +1,165 @@
-# Nova Backend
+# Nova Agent Platform
 
-Minimal FastAPI backend for Nova Agent Platform Phase 1.
+Nova Agent Platform is a LangGraph-oriented Agentic Multimodal Media Intelligence Platform for video understanding, segment-level retrieval, highlight discovery, and creative suggestion generation.
 
-## Run Tests
+The long-term architecture is not a closed, self-built agent toy system. Nova is designed around industry-standard orchestration: FastAPI exposes product APIs, LangGraph coordinates agentic search workflows, retrieval modules provide hybrid search and rerank, and multimodal adapters turn long videos into searchable, explainable, reusable `MediaSegment` units.
 
-Run tests through the `nova` conda environment:
+## Repository Status
+
+| Branch / Tag | Status | What it contains |
+| --- | --- | --- |
+| `main` / `phase1-mvp` | Stable Phase 1 baseline | FastAPI vertical slice: upload, mock processing, local segment retrieval, and detail APIs |
+| `phase/2-multimodal-retrieval-agentic-search` / `phase2-mvp` | Phase 2 upgrade branch | Hybrid retrieval, deterministic embedding/rerank utilities, and agentic search runtime lite |
+| `phase/3-langgraph-agentic-search-migration` / `phase3-mvp` | Phase 3 migration branch | LangGraph-based agentic search workflow, `AgentState`, graph nodes, thread/checkpoint support, and node trace |
+
+This `main` branch intentionally stays at the Phase 1 runnable backend baseline. LangGraph migration work lives on the Phase 3 branch until it is reviewed and merged.
+
+## What Main Implements
+
+The current `main` branch implements the smallest runnable backend vertical slice:
+
+```text
+Upload video
+-> create Video record
+-> generate deterministic mock MediaSegment objects
+-> store data in an in-memory repository
+-> search local segment metadata
+-> return ranked segments with timestamps, evidence-based reasons, and creative suggestions
+```
+
+Implemented APIs:
+
+- `GET /health`
+- `POST /api/v1/videos`
+- `GET /api/v1/videos/{video_id}`
+- `GET /api/v1/segments/{segment_id}`
+- `POST /api/v1/search`
+
+Phase 1 uses deterministic mock media understanding. It does not perform real video decoding, ASR, OCR, captioning, embeddings, vector search, or LLM calls.
+
+## Architecture Direction
+
+Nova is organized around these layers:
+
+- **API Layer**: FastAPI endpoints for upload, segment detail, search, and future agentic workflows.
+- **Agent Orchestration Layer**: LangGraph `StateGraph` on the Phase 3 branch, with `AgentState`, query rewrite, retrieval, rerank, creative suggestion, reflection, final answer, checkpoint, and trace nodes.
+- **Multimodal Pipeline**: Replaceable adapters for ASR, OCR, frame captioning, scene/shot detection, motion tagging, and media preprocessing.
+- **Retrieval Engine**: BM25-like lexical retrieval, dense retrieval interfaces, metadata filtering, hybrid fusion, rerank, and evaluation metrics.
+- **Storage and Workflow Layer**: In-memory storage in Phase 1; metadata DB, object storage, vector DB, Celery/Redis, and observability are future production concerns.
+
+## Setup
+
+Use the existing `nova` conda environment:
 
 ```bash
 conda run -n nova pytest -q
 ```
 
-## Start Server
+Install dependencies into that environment only:
 
-Start the FastAPI server with:
+```bash
+conda run -n nova python -m pip install -e ".[dev]"
+```
+
+## Run the Backend
 
 ```bash
 conda run -n nova uvicorn backend.app.main:app --reload
 ```
 
-## Phase 1 Flow
+The API will be available at:
 
-Phase 1 implements a local vertical slice:
+```text
+http://127.0.0.1:8000
+```
 
-1. Upload a video through the API.
-2. Store video and segment metadata in an in-memory repository.
-3. Run deterministic mock media processing.
-4. Retrieve video detail and segment detail.
-5. Search locally across generated mock segment data.
+## Quick API Walkthrough
 
-## Implemented APIs
+Health check:
 
-- `GET /health`: service health check.
-- `POST /api/v1/videos`: upload a video and create mock processed segments.
-- `GET /api/v1/videos/{video_id}`: fetch video detail.
-- `GET /api/v1/segments/{segment_id}`: fetch segment detail.
-- `POST /api/v1/search`: run local retrieval over Phase 1 data.
+```bash
+curl http://127.0.0.1:8000/health
+```
 
-## Phase 1 Mocks
+Upload a small file. The backend treats it as an uploaded video and synchronously creates mock `MediaSegment` objects:
 
-Phase 1 uses deterministic mock media processing instead of real ASR, OCR, captioning, or embedding generation. Search runs against the local in-memory data produced by that mock pipeline.
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/videos \
+  -H "X-User-Id: user_1" \
+  -F "file=@sample.mp4"
+```
 
-## Out Of Scope
+Search for creative video material:
 
-The following are intentionally out of scope for Phase 1:
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/search \
+  -H "Content-Type: application/json" \
+  -H "X-User-Id: user_1" \
+  -d '{
+    "query_text": "帮我找适合做热血卡点的视频素材",
+    "top_k": 5
+  }'
+```
 
-- Real ASR, OCR, captioning, and embedding.
-- Milvus, Qdrant, and OpenSearch.
-- LangGraph.
-- Celery, Redis, and workflow engines.
-- Frontend.
-- LLM calls.
-- External services.
-- Phase 2 work.
+The search response includes query expansion, ranked segment results, timestamps, evidence-based reasons, and a basic creative suggestion.
+
+## Development Commands
+
+Run all tests:
+
+```bash
+conda run -n nova pytest -q
+```
+
+Run a focused test file:
+
+```bash
+conda run -n nova pytest tests/test_search_api.py -q
+```
+
+Check the currently implemented routes:
+
+```bash
+conda run -n nova python - <<'PY'
+from backend.app.main import app
+for route in app.routes:
+    print(sorted(route.methods), route.path)
+PY
+```
+
+## What Is Mocked In Phase 1
+
+- Video processing is deterministic and does not read real media streams.
+- ASR, OCR, frame captions, tags, motion scores, and highlight scores are generated by the mock pipeline.
+- Retrieval is local and in-memory.
+- Creative suggestions are rule-based.
+- User data is scoped in memory only and is reset when the process restarts.
+
+## Intentionally Out Of Scope On Main
+
+- LangGraph runtime on `main`
+- real Whisper / faster-whisper ASR
+- real PaddleOCR
+- real CLIP / SigLIP / bge-m3 / jina embeddings
+- Milvus, Qdrant, or OpenSearch
+- Celery / Redis workflow queue
+- MinIO or production object storage
+- vLLM, SGLang, or external LLM calls
+- frontend application
+- production observability dashboards
+
+## Working With Later Phases
+
+To inspect the hybrid retrieval and deterministic agentic search upgrade:
+
+```bash
+git switch phase/2-multimodal-retrieval-agentic-search
+conda run -n nova pytest -q
+```
+
+To inspect the LangGraph migration:
+
+```bash
+git switch phase/3-langgraph-agentic-search-migration
+conda run -n nova pytest -q
+```
