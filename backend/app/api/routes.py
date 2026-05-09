@@ -4,9 +4,10 @@ from dataclasses import replace
 from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile
 
 from backend.app.domain.models import SearchQuery, Video
+from backend.app.agents import AgentSearchRuntime
 from backend.app.media.mock_pipeline import generate_mock_media_segments
 from backend.app.repositories.in_memory import InMemoryMediaRepository
-from backend.app.retrieval.local_index import LocalMediaIndex
+from backend.app.retrieval.hybrid import HybridRetriever
 from backend.app.retrieval.query_rewrite import rewrite_query
 from backend.app.retrieval.rerank import rerank_results
 from backend.app.suggestions.creative import (
@@ -115,7 +116,7 @@ def search_segments(
     query_rewrite = rewrite_query(query_text)
 
     user_segments = repository.list_segments_for_user(user_id)
-    index = LocalMediaIndex(user_segments)
+    index = HybridRetriever(user_segments)
     candidate_query = search_query.model_copy(update={"top_k": len(user_segments) or 1})
     ranked_results = rerank_results(index.search(candidate_query))[: search_query.top_k]
     ranked_results = [
@@ -130,4 +131,41 @@ def search_segments(
         "results": [result.to_response() for result in ranked_results],
         "answer": "已按本地片段证据和高光分排序。",
         "creative_suggestion": overall_suggestion.model_dump(),
+    }
+
+
+@router.post("/api/v1/search/agentic")
+def agentic_search_segments(
+    payload: dict,
+    user_id: str = Depends(_require_user_id),
+):
+    query_text = str(payload.get("query_text", "")).strip()
+    if not query_text:
+        raise HTTPException(status_code=400, detail="query_text is required")
+
+    top_k = int(payload.get("top_k", 5))
+    search_query = SearchQuery(
+        query_text=query_text,
+        user_id=user_id,
+        session_id=payload.get("session_id"),
+        top_k=max(1, min(top_k, 20)),
+        filters=payload.get("filters") or {},
+    )
+    rewritten_query = rewrite_query(query_text)
+
+    user_segments = repository.list_segments_for_user(user_id)
+    runtime_response = AgentSearchRuntime(user_segments).run(search_query)
+
+    return {
+        "plan": runtime_response.plan.model_dump(),
+        "rewritten_query": rewritten_query.model_dump(),
+        "tool_trace": [entry.model_dump() for entry in runtime_response.trace],
+        "ranked_segments": [result.to_response() for result in runtime_response.results],
+        "reflection": runtime_response.reflection.model_dump(),
+        "final_answer": runtime_response.final_answer,
+        "creative_suggestion": (
+            runtime_response.creative_suggestion.model_dump()
+            if runtime_response.creative_suggestion is not None
+            else None
+        ),
     }
