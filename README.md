@@ -1,87 +1,111 @@
 # Nova Agent Platform
 
-Nova Agent Platform is a LangGraph-oriented Agentic Multimodal Media Intelligence Platform for video understanding, segment-level retrieval, highlight discovery, and creative suggestion generation.
+Nova Agent Platform 是基于 LangGraph 的 Agentic Multimodal Media Intelligence Platform，面向视频内容理解、片段级检索、高光定位和创作建议生成。
 
-The long-term architecture is not a closed, self-built agent toy system. Nova is designed around industry-standard orchestration: FastAPI exposes product APIs, LangGraph coordinates agentic search workflows, retrieval modules provide hybrid search and rerank, and multimodal adapters turn long videos into searchable, explainable, reusable `MediaSegment` units.
+系统将上传的视频转换为可检索、可解释、可复用的 `MediaSegment`，再通过 Hybrid Retrieval、Rerank、Evidence Grounding 和 LangGraph Agent Workflow 返回带时间戳、证据和创作建议的结构化结果。
 
-## Repository Status
+## 当前实现
 
-| Branch / Tag | Status | What it contains |
-| --- | --- | --- |
-| `main` / `phase1-mvp` | Stable Phase 1 baseline | FastAPI vertical slice: upload, mock processing, local segment retrieval, and detail APIs |
-| `phase/2-multimodal-retrieval-agentic-search` / `phase2-mvp` | Phase 2 upgrade branch | Hybrid retrieval, deterministic embedding/rerank utilities, and agentic search runtime lite |
-| `phase/3-langgraph-agentic-search-migration` / `phase3-mvp` | Phase 3 migration branch | LangGraph-based agentic search workflow, `AgentState`, graph nodes, thread/checkpoint support, and node trace |
-
-This `main` branch intentionally stays at the Phase 1 runnable backend baseline. LangGraph migration work lives on the Phase 3 branch until it is reviewed and merged.
-
-## What Main Implements
-
-The current `main` branch implements the smallest runnable backend vertical slice:
+当前代码已经实现一个可运行的后端闭环：
 
 ```text
 Upload video
 -> create Video record
--> generate deterministic mock MediaSegment objects
--> store data in an in-memory repository
--> search local segment metadata
--> return ranked segments with timestamps, evidence-based reasons, and creative suggestions
+-> mock multimodal processing
+-> create MediaSegment objects
+-> build local hybrid retrieval index
+-> execute lexical / dense / hybrid search
+-> rerank by relevance, motion_score, highlight_score, tags
+-> run LangGraph agentic search workflow
+-> return grounded answer and creative suggestions
 ```
 
-Implemented APIs:
+已实现能力：
+
+- FastAPI backend skeleton and route registration
+- `Video`、`MediaSegment`、`SearchQuery`、`RetrievalResult` 等核心领域模型
+- 用户隔离的 in-memory repository
+- 确定性 mock 多模态处理管线
+- 可替换的 media processing contracts
+- deterministic media preprocessing adapter / stub
+- 本地 BM25-like lexical retrieval
+- deterministic local dense embedding stub
+- metadata filtering
+- hybrid score fusion
+- rule-based rerank
+- retrieval evaluation utilities: `recall@k`、`MRR`、`nDCG`
+- LangGraph `AgentState` and `StateGraph`
+- Query Rewrite、Retrieval、Rerank、Creative Suggestion、Final Answer、Reflection nodes
+- in-memory checkpointer and `thread_id` support
+- serializable `node_trace`
+- backward-compatible normal search API
+- LangGraph-backed agentic search API
+
+## Architecture
+
+```text
+Nova Agent Platform
+├── API Layer
+│   └── FastAPI routes
+├── Agent Orchestration Layer
+│   ├── LangGraph StateGraph
+│   ├── AgentState
+│   ├── QueryRewriteNode
+│   ├── RetrievalNode
+│   ├── RerankNode
+│   ├── CreativeSuggestionNode
+│   ├── FinalAnswerNode
+│   ├── ReflectionNode
+│   ├── Checkpointer
+│   └── Node Trace
+├── Multimodal Pipeline
+│   ├── media contracts
+│   ├── mock processing pipeline
+│   └── preprocessing adapter / stub
+├── Retrieval Engine
+│   ├── BM25-like lexical retrieval
+│   ├── deterministic dense embedding
+│   ├── metadata filtering
+│   ├── hybrid fusion
+│   ├── rerank
+│   └── evaluation metrics
+└── Storage
+    └── in-memory repository
+```
+
+## API
+
+All API requests that access user data require:
+
+```text
+X-User-Id: <user_id>
+```
+
+Implemented endpoints:
 
 - `GET /health`
 - `POST /api/v1/videos`
 - `GET /api/v1/videos/{video_id}`
 - `GET /api/v1/segments/{segment_id}`
 - `POST /api/v1/search`
+- `POST /api/v1/search/agentic`
 
-Phase 1 uses deterministic mock media understanding. It does not perform real video decoding, ASR, OCR, captioning, embeddings, vector search, or LLM calls.
-
-## Architecture Direction
-
-Nova is organized around these layers:
-
-- **API Layer**: FastAPI endpoints for upload, segment detail, search, and future agentic workflows.
-- **Agent Orchestration Layer**: LangGraph `StateGraph` on the Phase 3 branch, with `AgentState`, query rewrite, retrieval, rerank, creative suggestion, reflection, final answer, checkpoint, and trace nodes.
-- **Multimodal Pipeline**: Replaceable adapters for ASR, OCR, frame captioning, scene/shot detection, motion tagging, and media preprocessing.
-- **Retrieval Engine**: BM25-like lexical retrieval, dense retrieval interfaces, metadata filtering, hybrid fusion, rerank, and evaluation metrics.
-- **Storage and Workflow Layer**: In-memory storage in Phase 1; metadata DB, object storage, vector DB, Celery/Redis, and observability are future production concerns.
-
-## Setup
-
-Use the existing `nova` conda environment:
-
-```bash
-conda run -n nova pytest -q
-```
-
-Install dependencies into that environment only:
-
-```bash
-conda run -n nova python -m pip install -e ".[dev]"
-```
-
-## Run the Backend
-
-```bash
-conda run -n nova uvicorn backend.app.main:app --reload
-```
-
-The API will be available at:
-
-```text
-http://127.0.0.1:8000
-```
-
-## Quick API Walkthrough
-
-Health check:
+### Health Check
 
 ```bash
 curl http://127.0.0.1:8000/health
 ```
 
-Upload a small file. The backend treats it as an uploaded video and synchronously creates mock `MediaSegment` objects:
+Expected response:
+
+```json
+{
+  "status": "ok",
+  "service": "nova-backend"
+}
+```
+
+### Upload Video
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/v1/videos \
@@ -89,7 +113,9 @@ curl -X POST http://127.0.0.1:8000/api/v1/videos \
   -F "file=@sample.mp4"
 ```
 
-Search for creative video material:
+The current implementation stores metadata in memory and synchronously creates deterministic mock `MediaSegment` objects.
+
+### Normal Search
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/v1/search \
@@ -101,65 +127,130 @@ curl -X POST http://127.0.0.1:8000/api/v1/search \
   }'
 ```
 
-The search response includes query expansion, ranked segment results, timestamps, evidence-based reasons, and a basic creative suggestion.
+Response includes:
 
-## Development Commands
+- `query_rewrite`
+- `expanded_queries`
+- `results`
+- `answer`
+- `creative_suggestion`
 
-Run all tests:
+### Agentic Search
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/search/agentic \
+  -H "Content-Type: application/json" \
+  -H "X-User-Id: user_1" \
+  -d '{
+    "query_text": "帮我找适合做热血卡点的视频素材",
+    "top_k": 5,
+    "thread_id": "demo-thread-1"
+  }'
+```
+
+`/api/v1/search/agentic` is executed by the LangGraph workflow.
+
+Response includes:
+
+- `graph_run_id`
+- `thread_id`
+- `state_snapshot`
+- `node_trace`
+- `plan`
+- `rewritten_query`
+- `retrieved_segments`
+- `reranked_segments`
+- `ranked_segments`
+- `reflection_result`
+- `final_answer`
+- `creative_suggestions`
+
+## Run Locally
+
+Use the existing `nova` conda environment.
+
+Install dependencies:
+
+```bash
+conda run -n nova python -m pip install -e ".[dev]"
+```
+
+Run tests:
 
 ```bash
 conda run -n nova pytest -q
 ```
 
-Run a focused test file:
+Start the API server:
 
 ```bash
-conda run -n nova pytest tests/test_search_api.py -q
+conda run -n nova uvicorn backend.app.main:app --reload
 ```
 
-Check the currently implemented routes:
+Default local URL:
 
-```bash
-conda run -n nova python - <<'PY'
-from backend.app.main import app
-for route in app.routes:
-    print(sorted(route.methods), route.path)
-PY
+```text
+http://127.0.0.1:8000
 ```
 
-## What Is Mocked In Phase 1
+## Test Coverage
 
-- Video processing is deterministic and does not read real media streams.
-- ASR, OCR, frame captions, tags, motion scores, and highlight scores are generated by the mock pipeline.
-- Retrieval is local and in-memory.
-- Creative suggestions are rule-based.
-- User data is scoped in memory only and is reset when the process restarts.
+The test suite covers:
 
-## Intentionally Out Of Scope On Main
+- health check
+- domain model validation
+- in-memory repository user scoping
+- mock media processing
+- media contracts and preprocessing stub
+- upload and segment detail APIs
+- normal search API
+- hybrid retrieval
+- rerank
+- retrieval metrics
+- agent planner and tools
+- LangGraph node execution
+- `AgentState` serialization
+- checkpoint / thread behavior
+- node trace serialization
+- agentic search API
+- Phase 2 and Phase 3 end-to-end flows
 
-- LangGraph runtime on `main`
-- real Whisper / faster-whisper ASR
-- real PaddleOCR
-- real CLIP / SigLIP / bge-m3 / jina embeddings
-- Milvus, Qdrant, or OpenSearch
-- Celery / Redis workflow queue
-- MinIO or production object storage
-- vLLM, SGLang, or external LLM calls
+## Current Mocked Components
+
+The project is intentionally deterministic in local tests:
+
+- media decoding is stubbed
+- ASR is mocked
+- OCR is mocked
+- frame captioning is mocked
+- visual/text embedding uses deterministic local logic
+- rerank is rule-based
+- creative suggestions are rule-based
+- storage is in memory
+- checkpointing is in memory
+- no external LLM call is made
+
+## Planned But Not Yet Completed
+
+The following work is planned but not implemented in the current local backend:
+
+- real video frame/audio extraction with FFmpeg adapter
+- production ASR adapter such as Whisper or faster-whisper
+- production OCR adapter such as PaddleOCR
+- production captioning and visual embedding adapters
+- vector database integration such as Milvus or Qdrant
+- production lexical index such as OpenSearch
+- persistent metadata database
+- object storage such as MinIO
+- Celery / Redis async media workflow
+- Prometheus / Grafana / OpenTelemetry observability
 - frontend application
-- production observability dashboards
+- streaming response
+- external LLM or self-hosted LLM serving through vLLM / SGLang
 
-## Working With Later Phases
+## Development Notes
 
-To inspect the hybrid retrieval and deterministic agentic search upgrade:
-
-```bash
-git switch phase/2-multimodal-retrieval-agentic-search
-conda run -n nova pytest -q
-```
-
-To inspect the LangGraph migration:
-
-```bash
-git switch phase/3-langgraph-agentic-search-migration
-conda run -n nova pytest -q
-```
+- Keep API response compatibility for `POST /api/v1/search`.
+- Add new agentic behavior through LangGraph nodes and `AgentState`.
+- Keep heavy model and infrastructure integrations behind adapters.
+- Keep tests deterministic and runnable with `conda run -n nova pytest -q`.
