@@ -6,6 +6,32 @@ def _upload_video(client, user_id: str, filename: str = "agentic.mp4"):
     )
 
 
+def test_agentic_search_uses_in_memory_checkpointer_with_supplied_thread_id(client, monkeypatch):
+    import backend.app.api.routes as routes
+
+    _upload_video(client, "agentic-checkpoint-user")
+    calls = {"passed": None}
+    real_build_agent_graph = routes.build_agent_graph
+
+    def capturing_build_agent_graph(segments, *, checkpointer=None):
+        calls["passed"] = checkpointer
+        return real_build_agent_graph(segments, checkpointer=checkpointer)
+
+    monkeypatch.setattr(routes, "build_agent_graph", capturing_build_agent_graph)
+
+    response = client.post(
+        "/api/v1/search/agentic",
+        headers={"X-User-Id": "agentic-checkpoint-user"},
+        json={"query_text": "热血卡点", "thread_id": "api-thread-1"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["thread_id"] == "api-thread-1"
+    assert body["state_snapshot"]["thread_id"] == "api-thread-1"
+    assert calls["passed"] is routes.agent_checkpointer
+
+
 def test_agentic_search_returns_grounded_plan_trace_ranked_segments_and_suggestions(client):
     upload_response = _upload_video(client, "agentic-owner")
     video_id = upload_response.json()["video_id"]
@@ -26,6 +52,14 @@ def test_agentic_search_returns_grounded_plan_trace_ranked_segments_and_suggesti
         "reflection",
         "final_answer",
         "creative_suggestion",
+        "graph_run_id",
+        "thread_id",
+        "state_snapshot",
+        "node_trace",
+        "retrieved_segments",
+        "reranked_segments",
+        "reflection_result",
+        "creative_suggestions",
     }.issubset(body)
     assert [step["tool_name"] for step in body["plan"]["steps"]] == [
         "query_rewrite",
@@ -37,6 +71,22 @@ def test_agentic_search_returns_grounded_plan_trace_ranked_segments_and_suggesti
     assert body["rewritten_query"]["original_query"] == "帮我找适合做热血卡点的视频素材"
     assert "high_energy" in body["rewritten_query"]["expanded_queries"]
     assert [entry["status"] for entry in body["tool_trace"]] == ["ok", "ok", "ok", "ok", "ok"]
+    assert [entry["node_name"] for entry in body["node_trace"]] == [
+        "query_rewrite",
+        "retrieval",
+        "rerank",
+        "creative_suggestion",
+        "final_answer",
+        "reflection",
+    ]
+    assert body["graph_run_id"]
+    assert body["thread_id"]
+    assert body["state_snapshot"]["graph_run_id"] == body["graph_run_id"]
+    assert body["state_snapshot"]["thread_id"] == body["thread_id"]
+    assert body["retrieved_segments"]
+    assert body["reranked_segments"] == body["ranked_segments"]
+    assert body["reflection_result"] == body["reflection"]
+    assert body["creative_suggestions"][0] == body["creative_suggestion"]
     assert body["reflection"]["passed"] is True
     assert body["reflection"]["issues"] == []
     assert body["creative_suggestion"]["recommended_bgm_style"]

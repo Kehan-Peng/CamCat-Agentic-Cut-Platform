@@ -1,10 +1,14 @@
 import hashlib
+from uuid import uuid4
 from dataclasses import replace
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile
 
+from backend.app.agents.checkpoint import build_in_memory_checkpointer
+from backend.app.agents.graph import build_agent_graph, invoke_agent_graph
+from backend.app.agents.planner import SearchPlanner
+from backend.app.agents.state import AgentState
 from backend.app.domain.models import SearchQuery, Video
-from backend.app.agents import AgentSearchRuntime
 from backend.app.media.mock_pipeline import generate_mock_media_segments
 from backend.app.repositories.in_memory import InMemoryMediaRepository
 from backend.app.retrieval.hybrid import HybridRetriever
@@ -17,6 +21,7 @@ from backend.app.suggestions.creative import (
 
 router = APIRouter()
 repository = InMemoryMediaRepository()
+agent_checkpointer = build_in_memory_checkpointer()
 
 
 @router.get("/health")
@@ -151,21 +156,76 @@ def agentic_search_segments(
         top_k=max(1, min(top_k, 20)),
         filters=payload.get("filters") or {},
     )
-    rewritten_query = rewrite_query(query_text)
 
     user_segments = repository.list_segments_for_user(user_id)
-    runtime_response = AgentSearchRuntime(user_segments).run(search_query)
+    graph_run_id = f"graph-{uuid4().hex}"
+    thread_id = str(payload.get("thread_id") or search_query.session_id or graph_run_id)
+    state = AgentState(
+        graph_run_id=graph_run_id,
+        thread_id=thread_id,
+        user_id=user_id,
+        session_id=search_query.session_id,
+        query_text=search_query.query_text,
+        scenario=search_query.scenario,
+        top_k=search_query.top_k,
+        filters=search_query.filters,
+    )
+    final_state = invoke_agent_graph(
+        build_agent_graph(user_segments, checkpointer=agent_checkpointer),
+        state,
+    )
+    creative_suggestion = _first_creative_suggestion(final_state.creative_suggestions)
+    reranked_segments = _serialize_results(final_state.reranked_segments)
 
     return {
-        "plan": runtime_response.plan.model_dump(),
-        "rewritten_query": rewritten_query.model_dump(),
-        "tool_trace": [entry.model_dump() for entry in runtime_response.trace],
-        "ranked_segments": [result.to_response() for result in runtime_response.results],
-        "reflection": runtime_response.reflection.model_dump(),
-        "final_answer": runtime_response.final_answer,
-        "creative_suggestion": (
-            runtime_response.creative_suggestion.model_dump()
-            if runtime_response.creative_suggestion is not None
-            else None
-        ),
+        "plan": SearchPlanner().plan(search_query).model_dump(),
+        "rewritten_query": final_state.rewritten_query,
+        "tool_trace": _compat_tool_trace(final_state.node_trace),
+        "ranked_segments": reranked_segments,
+        "reflection": final_state.reflection_result,
+        "final_answer": final_state.final_answer,
+        "creative_suggestion": creative_suggestion,
+        "graph_run_id": final_state.graph_run_id,
+        "thread_id": final_state.thread_id,
+        "state_snapshot": _state_snapshot(final_state),
+        "node_trace": final_state.node_trace,
+        "retrieved_segments": _serialize_results(final_state.retrieved_segments),
+        "reranked_segments": reranked_segments,
+        "reflection_result": final_state.reflection_result,
+        "creative_suggestions": final_state.creative_suggestions,
     }
+
+
+def _serialize_results(results: list) -> list[dict]:
+    return [result.to_response() if hasattr(result, "to_response") else result for result in results]
+
+
+def _first_creative_suggestion(suggestions: list) -> dict | None:
+    return suggestions[0] if suggestions else None
+
+
+def _state_snapshot(state: AgentState) -> dict:
+    snapshot = state.model_dump(exclude={"retrieved_segments", "reranked_segments"})
+    snapshot["retrieved_segments"] = _serialize_results(state.retrieved_segments)
+    snapshot["reranked_segments"] = _serialize_results(state.reranked_segments)
+    return snapshot
+
+
+def _compat_tool_trace(node_trace: list[dict]) -> list[dict]:
+    tool_names = {
+        "query_rewrite": "query_rewrite",
+        "retrieval": "search",
+        "rerank": "rerank",
+        "creative_suggestion": "creative_suggestion",
+        "reflection": "reflection",
+    }
+    return [
+        {
+            "tool_name": tool_names[entry["node_name"]],
+            "input": None,
+            "status": entry["status"],
+            "output": {"error": entry["error"]} if entry["error"] else None,
+        }
+        for entry in node_trace
+        if entry["node_name"] in tool_names
+    ]

@@ -1,10 +1,16 @@
 import pytest
 
+import backend.app.agents.runtime as runtime_module
 from backend.app.agents.planner import SearchPlanner
 from backend.app.agents.reflection import validate_grounding
 from backend.app.agents.runtime import AgentSearchRuntime
 from backend.app.agents.tools import ToolRegistry, UnknownToolError
 from backend.app.domain.models import MediaSegment, SearchQuery, SegmentEvidence
+
+
+def test_legacy_runtime_is_marked_as_compatibility_layer():
+    assert runtime_module.__doc__
+    assert "compatibility layer" in runtime_module.__doc__
 
 
 def test_planner_returns_deterministic_content_search_steps():
