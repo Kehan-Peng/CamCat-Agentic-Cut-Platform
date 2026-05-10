@@ -320,7 +320,7 @@ state_conflict
 
 新的目标路线以 `AGENTS.md` 和 `docs/` 中的 Phase 0-7 为准。旧实现可作为迁移基础，但不是最终架构的完整实现。
 
-## Phase 0-7 迁移路线
+## Phase 0-7 开发路线
 
 ### Phase 0：Documentation Reset and Baseline Audit
 
@@ -556,9 +556,9 @@ Response:
 }
 ```
 
-## 当前范围外
+## 完成中...
 
-以下功能不属于当前 Phase 0-3 的默认测试依赖：
+默认测试依赖：
 
 * Milvus / Qdrant / OpenSearch 生产部署。
 * Celery / Redis 生产队列。
@@ -568,7 +568,6 @@ Response:
 * 真实大模型推理作为默认测试依赖。
 * 完整视频剪辑器前端。
 
-这些能力可以在后续生产化阶段引入，但必须保留 deterministic local test path。
 
 ## 文档
 
