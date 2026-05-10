@@ -36,16 +36,15 @@ def build_agent_graph(segments: list[MediaSegment], *, checkpointer: Any | None 
 
 def invoke_agent_graph(compiled_graph: Any, state: AgentState, config: dict[str, Any] | None = None) -> AgentState:
     result = compiled_graph.invoke(state, config=_config_with_thread_id(state, config))
-    if isinstance(result, AgentState):
-        return result
-    return AgentState.model_validate(result)
+    # TypedDict 不支持 isinstance 检查，直接返回结果
+    return result
 
 
 def _config_with_thread_id(state: AgentState, config: dict[str, Any] | None) -> dict[str, Any]:
     if config is None:
-        return {"configurable": {"thread_id": state.thread_id}}
+        return {"configurable": {"thread_id": state.get('thread_id')}}
     configured = dict(config)
     configurable = dict(configured.get("configurable") or {})
-    configurable.setdefault("thread_id", state.thread_id)
+    configurable.setdefault("thread_id", state.get('thread_id'))
     configured["configurable"] = configurable
     return configured

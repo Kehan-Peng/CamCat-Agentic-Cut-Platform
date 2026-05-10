@@ -10,10 +10,14 @@ def trace_node(node_name: str, node: Callable[[AgentState], AgentState]) -> Call
         try:
             updated = node(state)
         except Exception as exc:
-            state.node_trace.append(_trace_entry(node_name, "error", started_at, str(exc)))
+            node_trace = state.get('node_trace', [])
+            node_trace.append(_trace_entry(node_name, "error", started_at, str(exc)))
+            state['node_trace'] = node_trace
             raise
 
-        updated.node_trace.append(_trace_entry(node_name, "ok", started_at, None))
+        node_trace = updated.get('node_trace', [])
+        node_trace.append(_trace_entry(node_name, "ok", started_at, None))
+        updated['node_trace'] = node_trace
         return updated
 
     return traced

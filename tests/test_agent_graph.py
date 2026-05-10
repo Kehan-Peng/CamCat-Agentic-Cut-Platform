@@ -14,13 +14,13 @@ def test_agent_graph_executes_deterministic_search_workflow():
 
     result = invoke_agent_graph(build_agent_graph([_segment("seg-a")]), state)
 
-    assert result.rewritten_query["normalized_query"] == "热血 卡点"
-    assert result.retrieved_segments
-    assert result.reranked_segments
-    assert result.creative_suggestions
-    assert result.reflection_result == {"passed": True, "issues": []}
-    assert result.final_answer
-    assert "seg-a" in result.final_answer
+    assert result["rewritten_query"]["normalized_query"] == "热血 卡点"
+    assert result.get("retrieved_segments")
+    assert result.get("reranked_segments")
+    assert result.get("creative_suggestions")
+    assert result.get("reflection_result") == {"passed": True, "issues": []}
+    assert result.get("final_answer")
+    assert "seg-a" in result["final_answer"]
 
 
 def test_agent_graph_keeps_state_serializable_after_execution():
@@ -34,7 +34,7 @@ def test_agent_graph_keeps_state_serializable_after_execution():
         ),
     )
 
-    dumped = result.model_dump()
+    dumped = dict(result)
 
     assert dumped["graph_run_id"] == "run-1"
     assert dumped["thread_id"] == "thread-1"

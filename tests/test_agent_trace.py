@@ -17,7 +17,7 @@ def test_graph_records_serializable_node_trace_in_execution_order():
         ),
     )
 
-    assert [entry["node_name"] for entry in result.node_trace] == [
+    assert [entry["node_name"] for entry in result["node_trace"]] == [
         "query_rewrite",
         "retrieval",
         "rerank",
@@ -25,9 +25,9 @@ def test_graph_records_serializable_node_trace_in_execution_order():
         "final_answer",
         "reflection",
     ]
-    assert [entry["status"] for entry in result.node_trace] == ["ok", "ok", "ok", "ok", "ok", "ok"]
-    assert all(isinstance(entry["latency_ms"], float) for entry in result.node_trace)
-    assert all(entry["error"] is None for entry in result.node_trace)
+    assert [entry["status"] for entry in result["node_trace"]] == ["ok", "ok", "ok", "ok", "ok", "ok"]
+    assert all(isinstance(entry["latency_ms"], float) for entry in result["node_trace"])
+    assert all(entry["error"] is None for entry in result["node_trace"])
 
 
 def test_trace_node_records_error_before_reraising():
@@ -44,11 +44,11 @@ def test_trace_node_records_error_before_reraising():
     with pytest.raises(ValueError, match="boom"):
         trace_node("failing_node", failing_node)(state)
 
-    assert state.node_trace == [
+    assert state["node_trace"] == [
         {
             "node_name": "failing_node",
             "status": "error",
-            "latency_ms": state.node_trace[0]["latency_ms"],
+            "latency_ms": state["node_trace"][0]["latency_ms"],
             "error": "boom",
         }
     ]
