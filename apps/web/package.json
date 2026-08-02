@@ -1,0 +1,26 @@
+{
+  "type": "module",
+  "scripts": {
+    "dev": "node ./node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5173",
+    "test": "node --test tests/*.test.mjs",
+    "build": "node ./node_modules/typescript/bin/tsc -b && node ./node_modules/vite/bin/vite.js build",
+    "preview": "node ./node_modules/vite/bin/vite.js preview --host 127.0.0.1 --port 4173",
+    "e2e": "playwright test"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^6.0.3",
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "vite": "^8.1.5"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.15",
+    "typescript": "^5.6.3"
+  }
+}

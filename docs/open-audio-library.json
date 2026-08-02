@@ -1,0 +1,35 @@
+[
+  {
+    "id": "mixkit-music-738",
+    "kind": "bgm",
+    "title": "Hip Hop 02",
+    "creator": "Lily J",
+    "tags": ["hip-hop", "positive", "motivational", "city", "vlog"],
+    "download_url": "https://assets.mixkit.co/music/738/738.mp3",
+    "source_url": "https://mixkit.co/free-stock-music/",
+    "storage_key": "library/audio/mixkit/music-738.mp3",
+    "license_name": "Mixkit Stock Music Free License"
+  },
+  {
+    "id": "mixkit-sfx-2393",
+    "kind": "ambient",
+    "title": "Light rain loop",
+    "creator": "Mixkit",
+    "tags": ["rain", "nature", "ambient", "loop"],
+    "download_url": "https://assets.mixkit.co/active_storage/sfx/2393/2393-preview.mp3",
+    "source_url": "https://mixkit.co/free-sound-effects/nature/",
+    "storage_key": "library/audio/mixkit/sfx-2393-light-rain.mp3",
+    "license_name": "Mixkit Sound Effects Free License"
+  },
+  {
+    "id": "mixkit-sfx-1714",
+    "kind": "sfx",
+    "title": "Fast rocket whoosh",
+    "creator": "Mixkit",
+    "tags": ["whoosh", "transition", "fast"],
+    "download_url": "https://assets.mixkit.co/active_storage/sfx/1714/1714-preview.mp3",
+    "source_url": "https://mixkit.co/free-sound-effects/transition/",
+    "storage_key": "library/audio/mixkit/sfx-1714-fast-whoosh.mp3",
+    "license_name": "Mixkit Sound Effects Free License"
+  }
+]

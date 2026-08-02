@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "camcat"
+version = "0.1.0"
+description = "Multimodal intelligent video editing harness"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "alembic>=1.16,<2",
+  "boto3>=1.39,<2",
+  "fastapi>=0.116,<1",
+  "httpx>=0.28,<1",
+  "jsonpatch>=1.33,<2",
+  "langgraph>=0.6,<2",
+  "psycopg[binary]>=3.2,<4",
+  "pydantic-settings>=2.10,<3",
+  "pymilvus>=2.6,<3",
+  "python-multipart>=0.0.20,<1",
+  "sqlalchemy>=2.0.41,<3",
+  "uvicorn[standard]>=0.35,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "mypy>=1.17,<2",
+  "pytest>=8.4,<10",
+  "pytest-asyncio>=1.1,<2",
+  "pytest-cov>=6.2,<8",
+  "ruff>=0.12,<1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["apps/api/tests", "tests/integration"]
+pythonpath = ["apps/api"]
+markers = [
+  "external: requires real configured external model services",
+  "integration: requires Docker Compose infrastructure",
+]
+
+[tool.setuptools.packages.find]
+where = ["apps/api"]
+include = ["camcat*"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["B008"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["camcat"]
+mypy_path = "apps/api"
+ignore_missing_imports = true
