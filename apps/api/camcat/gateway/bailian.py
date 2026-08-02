@@ -85,12 +85,16 @@ def build_rerank_payload(
     upstream_query = _modal_content(query, allow_video=False)
     if not upstream_query:
         raise ValueError("reranker query requires text or image")
+    if len(upstream_query) != 1:
+        raise ValueError("Bailian reranker requires exactly one query modality")
     upstream_documents: list[dict[str, str]] = []
     metadata: list[dict[str, Any]] = []
     for document in documents:
         content = _modal_content(document, allow_video=True)
         if not content:
             raise ValueError("reranker documents require text, image or video")
+        if len(content) != 1:
+            raise ValueError("Bailian reranker requires exactly one modality per document")
         upstream_documents.append(content)
         raw_metadata = document.get("metadata", {})
         if raw_metadata is None:

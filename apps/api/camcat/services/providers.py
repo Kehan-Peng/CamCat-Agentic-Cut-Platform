@@ -92,7 +92,6 @@ class QwenEmbeddingClient(_ProviderClient):
             data["text"] = text
         if media_field == "video":
             data["fps"] = str(self.settings.embedding_video_fps)
-            data["max_frames"] = str(self.settings.embedding_video_max_frames)
         files: dict[str, tuple[str, Any, str]] = {}
         if media_field and media_path:
             media_type = mimetypes.guess_type(media_path.name)[0] or "application/octet-stream"

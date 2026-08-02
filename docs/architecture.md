@@ -6,15 +6,15 @@ flowchart LR
     API --> PG[(PostgreSQL sessions/jobs/library metadata)]
     API --> S3[(MinIO / S3)]
     API --> LG["LangGraph harness"]
-    LG --> EMB["Qwen3-VL Embedding"]
-    LG --> RR["Qwen3-VL Reranker"]
-    LG --> LLM["Qwen LLM"]
+    LG --> GW["CamCat provider gateway"]
+    GW --> EMB["Bailian hosted Qwen3-VL Embedding"]
+    GW --> RR["Bailian hosted Qwen3-VL Reranker"]
+    GW --> LLM["Bailian hosted Qwen VL / ASR"]
     LG --> MV[(Milvus)]
     API --> Q["PostgreSQL job queue"]
     Q --> W["Worker"]
     W --> FF["FFmpeg / ffprobe"]
-    W --> ASR["ASR"]
-    W --> EMB
+    W --> GW
     W --> MV
     W --> S3
 ```

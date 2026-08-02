@@ -4,19 +4,17 @@ import os
 from pathlib import Path
 
 import pytest
+from camcat.config import Settings
+from pydantic import ValidationError
 
-REQUIRED = [
-    "CAMCAT_EMBEDDING_BASE_URL",
-    "CAMCAT_EMBEDDING_API_KEY",
-    "CAMCAT_RERANKER_BASE_URL",
-    "CAMCAT_RERANKER_API_KEY",
-    "CAMCAT_LLM_BASE_URL",
-    "CAMCAT_LLM_API_KEY",
-    "CAMCAT_ASR_BASE_URL",
-    "CAMCAT_ASR_API_KEY",
-    "CAMCAT_EXTERNAL_TEST_VIDEO",
-]
-missing = [name for name in REQUIRED if not os.environ.get(name)]
+try:
+    Settings()
+    provider_configuration_valid = True
+except ValidationError:
+    provider_configuration_valid = False
+missing = [] if os.environ.get("CAMCAT_EXTERNAL_TEST_VIDEO") else ["CAMCAT_EXTERNAL_TEST_VIDEO"]
+if not provider_configuration_valid:
+    missing.append("valid provider configuration in .env/environment")
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.external,
@@ -55,6 +53,11 @@ def test_real_qwen_text_image_video_embedding_and_reranking(tmp_path: Path) -> N
     )
     assert len(scores) == 2
     assert scores[0] > scores[1]
+    mixed_scores = reranker.rerank(
+        {"text": "海边日落", "image_base64": image_data_uri(image)},
+        [{"text": "夕阳下的海岸"}, {"text": "办公室里的键盘"}],
+    )
+    assert len(mixed_scores) == 2
 
     semantics = QwenVisualAnalysisClient(settings).analyze_video(video)
     assert semantics.description
@@ -82,3 +85,9 @@ def test_real_structured_llm_and_asr(tmp_path: Path) -> None:
     asr.healthcheck()
     transcription = asr.transcribe(audio)
     assert "text" in transcription
+
+
+def image_data_uri(path: Path) -> str:
+    import base64
+
+    return f"data:image/jpeg;base64,{base64.b64encode(path.read_bytes()).decode()}"

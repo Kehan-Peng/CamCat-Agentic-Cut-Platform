@@ -7,7 +7,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from camcat.retrieval.fusion import Candidate, FusionConfig, fuse_candidates
 from camcat.retrieval.milvus_store import MilvusSegmentStore, build_filter_expression
@@ -24,6 +24,10 @@ class RankedMaterial:
     route_ranks: dict[str, int]
 
 
+class MediaSigner(Protocol):
+    def signed_url(self, key: str, expires_seconds: int = 3600) -> str: ...
+
+
 class RetrievalService:
     def __init__(
         self,
@@ -31,11 +35,13 @@ class RetrievalService:
         store: MilvusSegmentStore,
         embedding: QwenEmbeddingClient,
         reranker: QwenRerankerClient,
+        media_signer: MediaSigner,
         fusion_config: FusionConfig | None = None,
     ) -> None:
         self.store = store
         self.embedding = embedding
         self.reranker = reranker
+        self.media_signer = media_signer
         self.fusion_config = fusion_config or FusionConfig()
 
     def search(
@@ -112,7 +118,12 @@ class RetrievalService:
             documents = [
                 {
                     "text": str(entity_by_id[item.segment_id].get("description_text", "")),
+                    "video_url": self.media_signer.signed_url(
+                        str(entity_by_id[item.segment_id]["storage_key"]),
+                        expires_seconds=600,
+                    ),
                     "metadata": {
+                        "segment_id": item.segment_id,
                         "tags": entity_by_id[item.segment_id].get("tags", []),
                         "event_type": entity_by_id[item.segment_id].get("event_type", ""),
                         "risk_score": entity_by_id[item.segment_id].get("risk_score", 0.0),
@@ -125,7 +136,12 @@ class RetrievalService:
                 }
                 for item in fused
             ]
-            reranker_scores = self.reranker.rerank(query, documents)
+            # Bailian qwen3-vl-rerank accepts at most four video documents in one
+            # request. Keep every candidate visual by batching instead of silently
+            # degrading overflow candidates to text-only ranking.
+            reranker_scores: list[float] = []
+            for start in range(0, len(documents), 4):
+                reranker_scores.extend(self.reranker.rerank(query, documents[start : start + 4]))
             ranked = [
                 RankedMaterial(
                     segment_id=item.segment_id,

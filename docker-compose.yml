@@ -9,23 +9,26 @@ x-api-environment: &api-environment
   CAMCAT_OBJECT_STORE_BUCKET: ${CAMCAT_OBJECT_STORE_BUCKET:-camcat}
   CAMCAT_MILVUS_URI: ${CAMCAT_MILVUS_URI:-http://milvus:19530}
   CAMCAT_MILVUS_TOKEN: ${CAMCAT_MILVUS_TOKEN:-}
-  CAMCAT_MILVUS_COLLECTION: ${CAMCAT_MILVUS_COLLECTION:-camcat_segments_v5}
+  CAMCAT_MILVUS_COLLECTION: ${CAMCAT_MILVUS_COLLECTION:-camcat_segments_v6}
   CAMCAT_SECURITY_MODE: ${CAMCAT_SECURITY_MODE:-local-single-user}
   CAMCAT_LOCAL_USER_ID: ${CAMCAT_LOCAL_USER_ID:-camcat-local-user}
   CAMCAT_TRUSTED_PROXY_SECRET: ${CAMCAT_TRUSTED_PROXY_SECRET:-}
   CAMCAT_LIBRARY_ADMIN_KEY: ${CAMCAT_LIBRARY_ADMIN_KEY:-}
-  CAMCAT_EMBEDDING_BASE_URL: ${CAMCAT_EMBEDDING_BASE_URL:?set real embedding endpoint in .env}
-  CAMCAT_EMBEDDING_API_KEY: ${CAMCAT_EMBEDDING_API_KEY:?set real embedding key in .env}
+  CAMCAT_PROVIDER_GATEWAY_API_KEY: ${CAMCAT_PROVIDER_GATEWAY_API_KEY:?set a private gateway key in .env}
+  CAMCAT_BAILIAN_API_HOST: ${CAMCAT_BAILIAN_API_HOST:?set the Bailian workspace API host in .env}
+  CAMCAT_BAILIAN_API_KEY: ${CAMCAT_BAILIAN_API_KEY:?set a rotated Bailian API key in .env}
+  CAMCAT_EMBEDDING_BASE_URL: ${CAMCAT_EMBEDDING_BASE_URL:-http://provider-gateway:8010}
+  CAMCAT_EMBEDDING_API_KEY: ${CAMCAT_EMBEDDING_API_KEY:-${CAMCAT_PROVIDER_GATEWAY_API_KEY}}
   CAMCAT_EMBEDDING_MODEL: ${CAMCAT_EMBEDDING_MODEL:-Qwen/Qwen3-VL-Embedding-8B}
   CAMCAT_EMBEDDING_DIMENSION: 2048
-  CAMCAT_RERANKER_BASE_URL: ${CAMCAT_RERANKER_BASE_URL:?set real reranker endpoint in .env}
-  CAMCAT_RERANKER_API_KEY: ${CAMCAT_RERANKER_API_KEY:?set real reranker key in .env}
+  CAMCAT_RERANKER_BASE_URL: ${CAMCAT_RERANKER_BASE_URL:-http://provider-gateway:8010}
+  CAMCAT_RERANKER_API_KEY: ${CAMCAT_RERANKER_API_KEY:-${CAMCAT_PROVIDER_GATEWAY_API_KEY}}
   CAMCAT_RERANKER_MODEL: ${CAMCAT_RERANKER_MODEL:-Qwen/Qwen3-VL-Reranker-8B}
-  CAMCAT_LLM_BASE_URL: ${CAMCAT_LLM_BASE_URL:?set real Qwen chat endpoint in .env}
-  CAMCAT_LLM_API_KEY: ${CAMCAT_LLM_API_KEY:?set real Qwen chat key in .env}
+  CAMCAT_LLM_BASE_URL: ${CAMCAT_LLM_BASE_URL:-http://provider-gateway:8010}
+  CAMCAT_LLM_API_KEY: ${CAMCAT_LLM_API_KEY:-${CAMCAT_PROVIDER_GATEWAY_API_KEY}}
   CAMCAT_LLM_MODEL: ${CAMCAT_LLM_MODEL:-qwen3-vl-plus}
-  CAMCAT_ASR_BASE_URL: ${CAMCAT_ASR_BASE_URL:?set real ASR endpoint in .env}
-  CAMCAT_ASR_API_KEY: ${CAMCAT_ASR_API_KEY:?set real ASR key in .env}
+  CAMCAT_ASR_BASE_URL: ${CAMCAT_ASR_BASE_URL:-http://provider-gateway:8010}
+  CAMCAT_ASR_API_KEY: ${CAMCAT_ASR_API_KEY:-${CAMCAT_PROVIDER_GATEWAY_API_KEY}}
   CAMCAT_ASR_MODEL: ${CAMCAT_ASR_MODEL:-qwen3-asr-flash}
   CAMCAT_RUNTIME_DIR: /var/lib/camcat
 
@@ -103,6 +106,23 @@ services:
       timeout: 5s
       retries: 30
 
+  provider-gateway:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    command: ["uvicorn", "camcat.gateway.main:app", "--host", "0.0.0.0", "--port", "8010"]
+    environment: *api-environment
+    ports:
+      - "127.0.0.1:8010:8010"
+    depends_on:
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8010/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
   migrate:
     build:
       context: .
@@ -128,6 +148,8 @@ services:
         condition: service_completed_successfully
       milvus:
         condition: service_healthy
+      provider-gateway:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health/live"]
       interval: 10s
@@ -148,6 +170,8 @@ services:
       migrate:
         condition: service_completed_successfully
       milvus:
+        condition: service_healthy
+      provider-gateway:
         condition: service_healthy
 
   integration-test:

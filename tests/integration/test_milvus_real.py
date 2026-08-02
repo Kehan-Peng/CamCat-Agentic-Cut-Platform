@@ -24,6 +24,7 @@ def test_real_milvus_dense_bm25_and_scalar_routes() -> None:
             {
                 "segment_id": segment_id,
                 "asset_id": str(uuid4()),
+                "storage_key": "segments/integration/source.mp4",
                 "multimodal_embedding": vector,
                 "description_text": "雨夜城市街道上的快速运动镜头",
                 "start_time": 0.0,
@@ -49,6 +50,7 @@ def test_real_milvus_dense_bm25_and_scalar_routes() -> None:
         assert dense_hit.segment_id == segment_id
         assert dense_hit.entity["license_name"] == "CC0-1.0"
         assert dense_hit.entity["source_url"] == "https://example.org/open-video"
+        assert dense_hit.entity["storage_key"] == "segments/integration/source.mp4"
         assert dense_hit.entity["semantic_metadata"]["scene"] == "雨夜城市"
         assert store.bm25_search("雨夜 城市", limit=5)[0].segment_id == segment_id
         assert (

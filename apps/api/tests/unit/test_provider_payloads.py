@@ -31,7 +31,6 @@ def settings() -> Settings:
         provider_timeout_seconds=10,
         provider_max_retries=0,
         embedding_video_fps=1.0,
-        embedding_video_max_frames=64,
     )
 
 
@@ -71,7 +70,6 @@ def test_embedding_contract_uploads_original_video_as_multipart(tmp_path: Path) 
         "dimensions": "2048",
         "text": "sunset",
         "fps": "1.0",
-        "max_frames": "64",
     }
     filename, _stream, media_type = captured["files"]["video"]
     assert filename == "source.mp4"

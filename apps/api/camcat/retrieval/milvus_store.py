@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -20,6 +21,7 @@ class MilvusSegmentStore:
     output_fields = [
         "segment_id",
         "asset_id",
+        "storage_key",
         "start_time",
         "end_time",
         "duration",
@@ -53,6 +55,7 @@ class MilvusSegmentStore:
     def ensure_collection(self) -> None:
         if self.client.has_collection(collection_name=self.collection):
             self._validate_collection()
+            self._wait_for_required_indexes()
             self.client.load_collection(collection_name=self.collection)
             return
 
@@ -64,6 +67,7 @@ class MilvusSegmentStore:
             max_length=64,
         )
         schema.add_field(field_name="asset_id", datatype=DataType.VARCHAR, max_length=64)
+        schema.add_field(field_name="storage_key", datatype=DataType.VARCHAR, max_length=1024)
         schema.add_field(
             field_name="multimodal_embedding",
             datatype=DataType.FLOAT_VECTOR,
@@ -119,6 +123,7 @@ class MilvusSegmentStore:
             index_params=indexes,
             consistency_level="Strong",
         )
+        self._wait_for_required_indexes()
         self.client.load_collection(collection_name=self.collection)
 
     def upsert(self, row: dict[str, Any]) -> None:
@@ -137,6 +142,8 @@ class MilvusSegmentStore:
             raise ValueError(
                 "Milvus rows require semantic_metadata, license_name and source_url"
             )
+        if not isinstance(row.get("storage_key"), str) or not row["storage_key"].strip():
+            raise ValueError("Milvus rows require a storage_key for visual reranking")
         self.client.upsert(collection_name=self.collection, data=[row])
 
     def dense_search(
@@ -212,6 +219,18 @@ class MilvusSegmentStore:
         missing = required - fields.keys()
         if missing:
             raise RuntimeError(f"Milvus collection is missing required fields: {sorted(missing)}")
+
+    def _wait_for_required_indexes(self, *, attempts: int = 120) -> None:
+        required = {"multimodal_embedding", "sparse"}
+        for attempt in range(attempts):
+            existing = set(self.client.list_indexes(collection_name=self.collection))
+            if required <= existing:
+                return
+            if attempt + 1 < attempts:
+                time.sleep(0.25)
+        raise RuntimeError(
+            f"Milvus collection is missing required indexes: {sorted(required - existing)}"
+        )
 
     @staticmethod
     def _hits(response: list[list[dict[str, Any]]]) -> list[MilvusHit]:

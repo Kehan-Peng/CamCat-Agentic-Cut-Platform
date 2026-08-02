@@ -72,9 +72,9 @@ class FakeUpstream:
                     ]
                 }
             return {"choices": [{"message": {"content": '{"summary":"ok"}'}}]}
-        return {
-            "output": {"results": [{"index": 0, "relevance_score": 0.8}]}
-        }
+        query = payload.get("input", {}).get("query", {})
+        score = 0.6 if "text" in query else 1.0
+        return {"output": {"results": [{"index": 0, "relevance_score": score}]}}
 
 
 def test_gateway_accepts_original_video_and_removes_staging_object() -> None:
@@ -122,6 +122,7 @@ def test_gateway_requires_bearer_auth_and_adapts_rerank_response() -> None:
         upstream=upstream,
     )
     with TestClient(app) as client:
+        assert client.get("/health/live").json() == {"status": "ok"}
         assert client.get("/health").status_code == 401
         response = client.post(
             "/v1/rerank",
@@ -129,11 +130,12 @@ def test_gateway_requires_bearer_auth_and_adapts_rerank_response() -> None:
             json={
                 "model": "Qwen/Qwen3-VL-Reranker-8B",
                 "query": {"text": "sunset", "image_base64": "data:image/jpeg;base64,YQ=="},
-                "documents": [
-                    {
-                        "text": "beach",
-                        "metadata": {"segment_id": "seg-1", "license_name": "Pixabay"},
-                    }
+                    "documents": [
+                        {
+                            "text": "beach",
+                            "video_url": "https://media.example/segment.mp4?signed=true",
+                            "metadata": {"segment_id": "seg-1", "license_name": "Pixabay"},
+                        }
                 ],
                 "top_n": 1,
                 "instruction": "Rank source clips.",
@@ -142,11 +144,19 @@ def test_gateway_requires_bearer_auth_and_adapts_rerank_response() -> None:
 
     assert response.status_code == 200, response.text
     assert response.json() == {"results": [{"index": 0, "relevance_score": 0.8}]}
-    _path, payload = upstream.calls[0]
-    assert payload["input"]["query"] == {
-        "text": "sunset",
-        "image": "data:image/jpeg;base64,YQ==",
-    }
+    rerank_payloads = [payload for path, payload in upstream.calls if "rerank" in path]
+    assert [payload["input"]["query"] for payload in rerank_payloads] == [
+        {"text": "sunset"},
+        {"text": "sunset"},
+        {"image": "data:image/jpeg;base64,YQ=="},
+        {"image": "data:image/jpeg;base64,YQ=="},
+    ]
+    assert [payload["input"]["documents"] for payload in rerank_payloads] == [
+        [{"text": "beach"}],
+        [{"video": "https://media.example/segment.mp4?signed=true"}],
+        [{"text": "beach"}],
+        [{"video": "https://media.example/segment.mp4?signed=true"}],
+    ]
 
 
 def test_gateway_adapts_chat_visual_analysis_and_asr() -> None:
@@ -216,3 +226,64 @@ def test_gateway_sanitizes_upstream_failures_as_bad_gateway() -> None:
 
     assert response.status_code == 502
     assert response.json() == {"detail": "Bailian transient HTTP response 503"}
+
+
+def test_gateway_rejects_video_staging_url_that_bailian_cannot_reach() -> None:
+    class PrivateStore(FakeStore):
+        def signed_url(self, key: str, expires_seconds: int = 3600) -> str:
+            return f"http://minio:9000/camcat/{key}"
+
+    store = PrivateStore()
+    app = create_gateway_app(
+        GatewayConfig(incoming_api_key="gateway-secret"),
+        object_store=store,
+        upstream=FakeUpstream(),
+    )
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/embeddings",
+            headers={"Authorization": "Bearer gateway-secret"},
+            data={"model": "Qwen/Qwen3-VL-Embedding-8B", "dimensions": "2048"},
+            files={"video": ("source.mp4", b"original-video", "video/mp4")},
+        )
+
+    assert response.status_code == 503
+    assert "publicly reachable" in response.json()["detail"]
+    assert store.deleted == list(store.uploads)
+
+
+def test_visual_analysis_cleans_partial_staging_upload_failure() -> None:
+    class PartialFailureStore(FakeStore):
+        def upload_stream(
+            self,
+            stream: BytesIO,
+            key: str,
+            content_type: str,
+            *,
+            metadata: dict[str, str] | None = None,
+        ) -> None:
+            super().upload_stream(
+                stream, key, content_type, metadata=metadata
+            )
+            raise RuntimeError("simulated object store interruption")
+
+    store = PartialFailureStore()
+    app = create_gateway_app(
+        GatewayConfig(incoming_api_key="gateway-secret"),
+        object_store=store,
+        upstream=FakeUpstream(),
+    )
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.post(
+            "/v1/analyze",
+            headers={"Authorization": "Bearer gateway-secret"},
+            data={
+                "model": "qwen3-vl-plus",
+                "prompt": "describe",
+                "response_schema": '{"type":"object"}',
+            },
+            files={"video": ("source.mp4", b"original-video", "video/mp4")},
+        )
+
+    assert response.status_code == 500
+    assert store.deleted == list(store.uploads)
