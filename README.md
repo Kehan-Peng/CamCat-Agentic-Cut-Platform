@@ -26,6 +26,10 @@ cp .env.example .env
 docker compose up --build
 ```
 
+开发和生产模式会在启动时拒绝空值、`change-me`、`placeholder` 和 `.invalid` Provider
+配置，避免带着假凭据进入运行态；只有不调用模型的 Compose integration test 使用隔离的
+`CAMCAT_ENVIRONMENT=test`。
+
 打开 <http://localhost:5173>。API 文档位于 <http://localhost:8000/docs>，MinIO Console 位于 <http://localhost:9001>。
 
 外部模型网关的精确 multipart/JSON 合同见 [docs/provider-contract.md](docs/provider-contract.md)。整体数据流与并发模型见 [docs/architecture.md](docs/architecture.md)。

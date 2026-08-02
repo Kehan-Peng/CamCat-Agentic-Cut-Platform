@@ -279,6 +279,8 @@ class CamCatGraph:
                     "origin": "source",
                     "storage_key": best_source["storage_key"],
                     "media_id": best_source["media_id"],
+                    "segment_start": best_source["segment_start"],
+                    "transcript_cues": best_source.get("transcript_cues", []),
                     "source_start": best_source["start_time"],
                     "source_end": best_source["end_time"],
                     "reason": "保证用户原片作为叙事主体",

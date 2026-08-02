@@ -127,6 +127,16 @@ class MilvusSegmentStore:
             raise ValueError(f"expected a {self.dimension}-dimensional multimodal embedding")
         if row.get("embedding_model") != self.embedding_model:
             raise ValueError("embedding model does not match the collection model")
+        if (
+            not isinstance(row.get("semantic_metadata"), dict)
+            or not isinstance(row.get("license_name"), str)
+            or not row["license_name"].strip()
+            or not isinstance(row.get("source_url"), str)
+            or not row["source_url"].strip()
+        ):
+            raise ValueError(
+                "Milvus rows require semantic_metadata, license_name and source_url"
+            )
         self.client.upsert(collection_name=self.collection, data=[row])
 
     def dense_search(

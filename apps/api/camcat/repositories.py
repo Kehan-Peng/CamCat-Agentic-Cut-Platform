@@ -19,6 +19,7 @@ from camcat.models import (
     AuditEvent,
     EditingSession,
     Job,
+    JobKind,
     JobStatus,
     StatePatch,
     StateVersion,
@@ -290,15 +291,6 @@ class JobRepository:
 
     def claim_next(self, *, worker_id: str, lease_seconds: int = 600) -> Job | None:
         now = utcnow()
-        self.db.execute(
-            update(Job)
-            .where(
-                Job.status == JobStatus.RUNNING,
-                Job.lease_expires_at < now,
-                Job.attempts >= Job.max_attempts,
-            )
-            .values(status=JobStatus.DEAD_LETTER, finished_at=now, worker_id=None)
-        )
         job = self.db.scalar(
             select(Job)
             .where(
@@ -325,6 +317,40 @@ class JobRepository:
         job.progress = 0.01
         self.db.commit()
         return job
+
+    def expire_exhausted_leases(self, *, now: datetime | None = None) -> list[Job]:
+        cutoff = now or utcnow()
+        jobs = self.db.scalars(
+            select(Job).where(
+                Job.status == JobStatus.RUNNING,
+                Job.lease_expires_at < cutoff,
+                Job.attempts >= Job.max_attempts,
+            )
+        ).all()
+        for job in jobs:
+            job.status = JobStatus.DEAD_LETTER
+            job.worker_id = None
+            job.lease_expires_at = None
+            job.finished_at = cutoff
+            checkpoint = dict(job.checkpoint or {})
+            checkpoint.update({"stage": "dead_lettered", "updated_at": cutoff.isoformat()})
+            job.checkpoint = checkpoint
+        self.db.commit()
+        return list(jobs)
+
+    def pending_ingest_compensations(self) -> list[Job]:
+        stage = Job.checkpoint["stage"].as_string()
+        return list(
+            self.db.scalars(
+                select(Job)
+                .where(
+                    Job.kind == JobKind.INGEST_MEDIA,
+                    Job.status == JobStatus.DEAD_LETTER,
+                    stage.is_distinct_from("compensated"),
+                )
+                .order_by(Job.finished_at, Job.id)
+            ).all()
+        )
 
     def update_progress(self, job: Job, progress: float, *, lease_seconds: int = 600) -> None:
         self.db.refresh(job)

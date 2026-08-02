@@ -60,7 +60,7 @@ class _ProviderClient:
 
 
 class QwenEmbeddingClient(_ProviderClient):
-    """SiliconFlow Qwen3-VL embedding client using real text and visual inputs."""
+    """Canonical gateway client using real Qwen3-VL text and visual inputs."""
 
     def __init__(self, settings: Settings) -> None:
         super().__init__(

@@ -38,7 +38,7 @@ from camcat.models import (
     StateVersion,
     utcnow,
 )
-from camcat.repositories import JobRepository, StateRepository
+from camcat.repositories import JobRepository, StateRepository, sanitize_job_error
 from camcat.retrieval.milvus_store import MilvusSegmentStore
 from camcat.retrieval.service import RetrievalService
 from camcat.schemas import (
@@ -161,6 +161,17 @@ async def http_error_handler(request: Request, exc: HTTPException) -> JSONRespon
         status=exc.status_code,
         code="http_error",
         message=str(exc.detail),
+        details={},
+    )
+
+
+@app.exception_handler(Exception)
+async def internal_error_handler(request: Request, _exc: Exception) -> JSONResponse:
+    return _error(
+        request,
+        status=500,
+        code="internal_error",
+        message="服务器无法完成请求。",
         details={},
     )
 
@@ -581,7 +592,7 @@ def agentic_search(request: SearchRequest, db: Db, owner_id: Owner) -> AgenticSe
         return _search_response(run, result, db)
     except Exception as exc:
         run.status = JobStatus.FAILED
-        run.error = str(exc)
+        run.error = sanitize_job_error(exc)
         run.finished_at = utcnow()
         db.commit()
         raise
@@ -958,7 +969,7 @@ def run_editing_agent(
         failed_run = db.get(GraphRun, run.id)
         if failed_run is not None:
             failed_run.status = JobStatus.FAILED
-            failed_run.error = str(exc)
+            failed_run.error = sanitize_job_error(exc)
             failed_run.finished_at = utcnow()
             db.commit()
         raise
@@ -1048,12 +1059,13 @@ def stream_editing_agent(
         except Exception as exc:
             db.rollback()
             failed = db.get(GraphRun, run.id)
+            public_error = sanitize_job_error(exc)
             if failed is not None:
                 failed.status = JobStatus.FAILED
-                failed.error = str(exc)
+                failed.error = public_error
                 failed.finished_at = utcnow()
                 db.commit()
-            yield _sse("failed", {"graph_run_id": str(run.id), "message": str(exc)})
+            yield _sse("failed", {"graph_run_id": str(run.id), "message": public_error})
 
     return StreamingResponse(
         events(),

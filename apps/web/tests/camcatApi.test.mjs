@@ -44,6 +44,31 @@ test("uploadVideo sends real media and license provenance", async () => {
   assert.equal(form.get("analysis_mode"), "keyframes");
 });
 
+test("permanent library upload rejects missing or local-only provenance", async () => {
+  const { createCamCatApiClient } = await loadApiModule();
+  let requestCount = 0;
+  const client = createCamCatApiClient({
+    baseUrl: "http://camcat.test",
+    userId: "user_001",
+    fetchImpl: async () => {
+      requestCount += 1;
+      return response({ video_id: "should-not-exist" });
+    },
+  });
+  const file = new File(["video"], "source.mp4", { type: "video/mp4" });
+
+  await assert.rejects(() => client.uploadVideo(file), /license and HTTP\(S\) source URL/i);
+  await assert.rejects(
+    () =>
+      client.uploadVideo(file, {
+        licenseName: "user-provided",
+        sourceUrl: "local://user-upload",
+      }),
+    /license and HTTP\(S\) source URL/i,
+  );
+  assert.equal(requestCount, 0);
+});
+
 test("user originals use the transient multi-file endpoint", async () => {
   const { createCamCatApiClient } = await loadApiModule();
   const requests = [];
@@ -195,4 +220,54 @@ test("SSE parser keeps node progress and completed session boundaries", async ()
   const events = [];
   for await (const event of parseServerSentEvents(stream)) events.push(event);
   assert.deepEqual(events.map((item) => item.event), ["node_completed", "completed"]);
+});
+
+test("interrupted agent stream replays numbered events before polling truth", async () => {
+  const { createCamCatApiClient } = await loadApiModule();
+  const urls = [];
+  const progress = [];
+  const interrupted = new ReadableStream({
+    start(controller) {
+      controller.enqueue(
+        new TextEncoder().encode(
+          'id: 0\nevent: run_started\ndata: {"graph_run_id":"g1","message":"started"}\n\n',
+        ),
+      );
+      controller.close();
+    },
+  });
+  const replay = new ReadableStream({
+    start(controller) {
+      controller.enqueue(
+        new TextEncoder().encode(
+          'id: 1\nevent: node_completed\ndata: {"graph_run_id":"g1","node":"retrieve","message":"replayed"}\n\n',
+        ),
+      );
+      controller.close();
+    },
+  });
+  const client = createCamCatApiClient({
+    baseUrl: "http://camcat.test",
+    userId: "designer",
+    fetchImpl: async (url) => {
+      urls.push(url);
+      if (url.endsWith("/agent/stream")) return new Response(interrupted);
+      if (url.endsWith("/graph-runs/g1/events?after=0")) return new Response(replay);
+      if (url.endsWith("/graph-runs/g1")) {
+        return response({ status: "succeeded", editing_session_id: "s1" });
+      }
+      if (url.endsWith("/editing/sessions/s1")) {
+        return response({ editing_session_id: "s1", state_version: 2, state: {} });
+      }
+      return response({ graph_run_id: "g1", ranked_segments: [], node_trace: [] });
+    },
+  });
+
+  const result = await client.runEditingAgentStream("s1", 1, "edit", (event) => {
+    progress.push(event);
+  });
+
+  assert.equal(result.session.state_version, 2);
+  assert.ok(urls.some((url) => url.endsWith("/graph-runs/g1/events?after=0")));
+  assert.ok(progress.some((event) => event.node === "retrieve" && event.message === "replayed"));
 });

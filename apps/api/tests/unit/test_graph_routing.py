@@ -59,3 +59,64 @@ def test_lightweight_edit_skips_retrieval_and_persists_inside_graph() -> None:
         "lightweight_edit",
         "persistence",
     ]
+
+
+class LibraryOnlyPlanLlm:
+    def json_completion(self, *, system: str, user: str) -> dict[str, Any]:
+        return {
+            "clips": [
+                {
+                    "segment_id": "library-1",
+                    "source_start": 0,
+                    "source_end": 1,
+                }
+            ]
+        }
+
+
+def test_source_fallback_keeps_asr_cues_for_timestamp_aligned_subtitles() -> None:
+    graph = CamCatGraph(  # type: ignore[arg-type]
+        llm=LibraryOnlyPlanLlm(), retrieval=FailingRetrieval()
+    )
+    cues = [{"text": "hello", "start": 0.25, "end": 0.75}]
+    result = graph.generate_plan(
+        CamCatState(
+            intent={"external_material_ratio_limit": 0.25},
+            source_materials=[
+                {
+                    "segment_id": "source-1",
+                    "start_time": 2.0,
+                    "end_time": 4.0,
+                    "quality_score": 0.9,
+                    "description_text": "source",
+                    "storage_key": "temporary/source.mp4",
+                    "media_id": "media-1",
+                    "transcript_cues": cues,
+                }
+            ],
+            ranked_materials=[
+                {
+                    "segment_id": "library-1",
+                    "reranker_score": 1.0,
+                    "entity": {
+                        "start_time": 0.0,
+                        "end_time": 1.0,
+                        "description_text": "library",
+                    },
+                }
+            ],
+        )
+    )
+
+    source_clip = result["edit_plan"][0]
+    assert source_clip["segment_start"] == 2.0
+    assert source_clip["transcript_cues"] == cues
+    assert graph._aligned_transcript_subtitles(result["edit_plan"]) == [
+        {
+            "subtitle_id": "subtitle-1",
+            "text": "hello",
+            "start": 0.25,
+            "end": 0.75,
+            "style": "default",
+        }
+    ]

@@ -34,11 +34,22 @@ def test_real_milvus_dense_bm25_and_scalar_routes() -> None:
                 "trigger_type": "scene_cut",
                 "event_type": "fast_motion",
                 "tags": ["雨夜", "城市"],
+                "semantic_metadata": {
+                    "scene": "雨夜城市",
+                    "actions": ["快速运动"],
+                    "composition": "街道远景",
+                },
+                "license_name": "CC0-1.0",
+                "source_url": "https://example.org/open-video",
                 "embedding_model": settings.embedding_model,
                 "embedding_dimension": settings.embedding_dimension,
             }
         )
-        assert store.dense_search(vector, limit=5)[0].segment_id == segment_id
+        dense_hit = store.dense_search(vector, limit=5)[0]
+        assert dense_hit.segment_id == segment_id
+        assert dense_hit.entity["license_name"] == "CC0-1.0"
+        assert dense_hit.entity["source_url"] == "https://example.org/open-video"
+        assert dense_hit.entity["semantic_metadata"]["scene"] == "雨夜城市"
         assert store.bm25_search("雨夜 城市", limit=5)[0].segment_id == segment_id
         assert (
             store.scalar_search({"event_type": "fast_motion"}, limit=5)[0].segment_id == segment_id
