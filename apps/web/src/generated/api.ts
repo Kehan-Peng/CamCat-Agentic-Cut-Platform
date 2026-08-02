@@ -46,6 +46,17 @@ export type EditingSessionResponse = {
   "updated_at": string;
 };
 
+export type ErrorBody = {
+  "code": string;
+  "message": string;
+  "details"?: Record<string, unknown>;
+  "request_id": string;
+};
+
+export type ErrorEnvelope = {
+  "error": ErrorBody;
+};
+
 export type GraphRunResponse = {
   "graph_run_id": string;
   "thread_id": string;
@@ -56,10 +67,6 @@ export type GraphRunResponse = {
   "error": string | null;
   "created_at": string;
   "finished_at": string | null;
-};
-
-export type HTTPValidationError = {
-  "detail"?: Array<ValidationError>;
 };
 
 export type ImportOpenMediaRequest = {
@@ -167,14 +174,6 @@ export type SourceUploadResponse = {
   "job_id": string;
   "expires_at": string;
   "media": Array<SourceMediaReference>;
-};
-
-export type ValidationError = {
-  "loc": Array<string | number>;
-  "msg": string;
-  "type": string;
-  "input"?: unknown;
-  "ctx"?: Record<string, unknown>;
 };
 
 export type VideoResponse = {

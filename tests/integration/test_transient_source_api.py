@@ -55,4 +55,6 @@ def test_user_source_upload_creates_analysis_job_but_no_library_asset(tmp_path: 
         job = db.get(Job, UUID(payload["job_id"]))
         assert job is not None
         assert job.kind == JobKind.ANALYZE_SOURCE
+        db.delete(job)
+        db.commit()
     assert assets_after == assets_before

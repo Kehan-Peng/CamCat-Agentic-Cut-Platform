@@ -31,6 +31,8 @@ def test_job_idempotency_expired_lease_retry_and_dead_letter() -> None:
             max_attempts=2,
         )
         assert duplicate.id == first.id
+        first.available_at = utcnow() - timedelta(days=365)
+        db.commit()
         claimed = repository.claim_next(worker_id="worker-a", lease_seconds=60)
         assert claimed is not None
         assert claimed.id == first.id
@@ -71,6 +73,8 @@ def test_crashed_job_at_attempt_limit_is_persisted_for_compensation() -> None:
             payload={"asset_id": str(uuid4())},
             max_attempts=1,
         )
+        job.available_at = utcnow() - timedelta(days=365)
+        db.commit()
         claimed = repository.claim_next(worker_id="worker-that-crashes", lease_seconds=60)
         assert claimed is not None and claimed.id == job.id
         claimed.lease_expires_at = utcnow() - timedelta(seconds=1)

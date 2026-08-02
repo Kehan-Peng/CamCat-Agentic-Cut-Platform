@@ -31,7 +31,7 @@ class Settings(BaseSettings):
 
     milvus_uri: str = "http://milvus:19530"
     milvus_token: SecretStr = SecretStr("")
-    milvus_collection: str = "camcat_segments_v4"
+    milvus_collection: str = "camcat_segments_v5"
 
     embedding_base_url: str
     embedding_api_key: SecretStr
