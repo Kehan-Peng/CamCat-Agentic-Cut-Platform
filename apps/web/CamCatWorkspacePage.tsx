@@ -1,8 +1,10 @@
 import React, { useMemo, useRef, useState } from "react";
 import {
   Activity,
+  ArrowLeft,
   ArrowUp,
   Boxes,
+  BriefcaseBusiness,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -42,6 +44,8 @@ import {
   type AgenticSearchResponse,
   type AuditEvent,
   type EditingSessionResponse,
+  type JobResponse,
+  type ProjectResponse,
   type RenderJobResponse,
   type SourceUploadResponse,
   type UploadedVideoResponse,
@@ -74,6 +78,7 @@ type TimelineClip = {
 };
 
 type WorkspaceStatus = "idle" | "uploading" | "searching" | "rendering" | "ready" | "error";
+export type ProductPage = "editing" | "processing" | "render";
 
 type WorkspaceController = {
   apiBase: string;
@@ -91,7 +96,10 @@ type WorkspaceController = {
   sourceUpload?: SourceUploadResponse;
   agentRun?: AgenticSearchResponse;
   renderResult?: RenderJobResponse;
+  activeJob?: JobResponse;
   editingSession?: EditingSessionResponse;
+  project?: ProjectResponse;
+  page: ProductPage;
   auditEvents: AuditEvent[];
   queryImageName?: string;
   evidence: EvidenceItem[];
@@ -107,6 +115,12 @@ type WorkspaceController = {
   handleReorderClip: (sourceId: string, targetId: string) => Promise<void>;
   handleTrimClip: (clipId: string) => Promise<void>;
   handleSplitClip: (clipId: string) => Promise<void>;
+  showEditingPage: () => void;
+  showProcessingPage: () => void;
+  showRenderPage: () => void;
+  handleCancelJob: () => Promise<void>;
+  handleRetryJob: () => Promise<void>;
+  onBack?: () => void;
 };
 
 const workflowSteps = ["Ingest", "Understand", "Plan", "Edit", "Render", "Review", "Export"];
@@ -119,15 +133,22 @@ const waveform = [
   76, 54, 32, 24, 36, 56, 70, 60, 42, 28, 22, 34, 48,
 ];
 
-export default function CamCatWorkspacePage() {
-  const workspace = useWorkspaceController();
+export type CamCatWorkspacePageProps = {
+  project?: ProjectResponse;
+  initialSession?: EditingSessionResponse;
+  initialPage?: ProductPage;
+  onBack?: () => void;
+};
+
+export default function CamCatWorkspacePage(props: CamCatWorkspacePageProps) {
+  const workspace = useWorkspaceController(props);
 
   return <AppShell workspace={workspace} />;
 }
 
-function useWorkspaceController(): WorkspaceController {
+function useWorkspaceController({ project, initialSession, initialPage = "editing", onBack }: CamCatWorkspacePageProps): WorkspaceController {
   const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env ?? {};
-  const apiBase = env.VITE_CAMCAT_API_BASE ?? "http://127.0.0.1:8000";
+  const apiBase = env.VITE_CAMCAT_API_BASE || "";
   const userId = env.VITE_CAMCAT_USER_ID ?? "camcat-local-user";
   const api = useMemo(() => createCamCatApiClient({ baseUrl: apiBase, userId }), [apiBase, userId]);
   const [query, setQuery] = useState("");
@@ -137,24 +158,40 @@ function useWorkspaceController(): WorkspaceController {
   const [progressLabel, setProgressLabel] = useState<string>();
   const [searchDepth, setSearchDepth] = useState<"instant" | "deep">("instant");
   const [analysisMode, setAnalysisMode] = useState<"keyframes" | "per-second">("keyframes");
-  const [selectedEvidenceId, setSelectedEvidenceId] = useState<string>();
-  const [uploadedVideo, setUploadedVideo] = useState<UploadedVideoResponse>();
+  const initialSourceMedia = initialSession?.state.source_media ?? [];
+  const initialSourceSegments = initialSession?.state.source_segments ?? [];
+  const [selectedEvidenceId, setSelectedEvidenceId] = useState<string | undefined>(initialSourceMedia[0]?.media_id);
+  const [uploadedVideo, setUploadedVideo] = useState<UploadedVideoResponse | undefined>(() => {
+    const first = initialSourceMedia[0];
+    if (!first) return undefined;
+    return {
+      video_id: first.media_id,
+      filename: first.filename,
+      status: "ready",
+      segment_count: initialSourceSegments.length,
+      duration_seconds: initialSourceMedia.reduce((sum, item) => sum + (item.duration_seconds ?? 0), 0),
+      playback_url: first.playback_url,
+    };
+  });
   const [sourceUpload, setSourceUpload] = useState<SourceUploadResponse>();
   const [liveTraceRows, setLiveTraceRows] = useState<WorkspaceTraceRow[]>([]);
   const [agentRun, setAgentRun] = useState<AgenticSearchResponse>();
   const [renderResult, setRenderResult] = useState<RenderJobResponse>();
-  const [editingSession, setEditingSession] = useState<EditingSessionResponse>();
+  const [activeJob, setActiveJob] = useState<JobResponse>();
+  const [page, setPage] = useState<ProductPage>(initialPage);
+  const [editingSession, setEditingSession] = useState<EditingSessionResponse | undefined>(initialSession);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [queryImageBase64, setQueryImageBase64] = useState<string>();
   const [queryImageName, setQueryImageName] = useState<string>();
 
   const runView = useMemo(() => (agentRun ? mapAgenticRunToWorkspace(agentRun) : undefined), [agentRun]);
   const evidence = useMemo<EvidenceItem[]>(() => {
-    const uploadedEvidence: EvidenceItem[] = sourceUpload
-      ? sourceUpload.media.map((media, index) => ({
+    const sourceMedia = sourceUpload?.media ?? editingSession?.state.source_media ?? [];
+    const uploadedEvidence: EvidenceItem[] = sourceMedia.length
+      ? sourceMedia.map((media, index) => ({
           id: media.media_id,
           title: media.filename,
-          meta: `用户原片 ${index + 1}/${sourceUpload.media.length} · 临时保留 4 小时`,
+          meta: `用户原片 ${index + 1}/${sourceMedia.length} · 临时保留 4 小时`,
           kind: "video" as const,
           active: selectedEvidenceId
             ? selectedEvidenceId === media.media_id
@@ -169,7 +206,7 @@ function useWorkspaceController(): WorkspaceController {
           active: selectedEvidenceId ? item.id === selectedEvidenceId : index === 0,
         }))
       : uploadedEvidence;
-  }, [runView, selectedEvidenceId, sourceUpload]);
+  }, [editingSession?.state.source_media, runView, selectedEvidenceId, sourceUpload]);
 
   const traceRows = useMemo<WorkspaceTraceRow[]>(() => {
     const rows = runView?.trace.length ? runView.trace : [];
@@ -196,12 +233,15 @@ function useWorkspaceController(): WorkspaceController {
     setProgress(0);
     setProgressLabel("正在上传素材");
     setRenderResult(undefined);
+    setPage("processing");
 
     try {
       const result = await api.uploadSourceMedia(files, analysisMode);
       setSourceUpload(result);
+      setActiveJob(await api.getJob(result.job_id));
       const analysis = await waitForJob(api.getJob, result.job_id, {
             onProgress: (job) => {
+              setActiveJob(job);
               setProgress(job.progress);
               setProgressLabel(
                 job.status === "queued"
@@ -252,6 +292,7 @@ function useWorkspaceController(): WorkspaceController {
       const result = await runSearchAndPlan(api, {
         query: trimmedQuery,
         sourceJobId: sourceUpload?.job_id,
+        projectId: project?.project_id,
         currentSession: editingSession,
         queryImageBase64,
         topK: searchDepth === "deep" ? 16 : 8,
@@ -295,11 +336,12 @@ function useWorkspaceController(): WorkspaceController {
 
     setStatus("rendering");
     setError(undefined);
+    setPage("render");
 
     try {
       let session = editingSession;
       if (!session) {
-        session = await api.createEditingSession(sourceVideoId, query, sourceUpload?.job_id);
+        session = await api.createEditingSession(sourceVideoId, query, sourceUpload?.job_id, project?.project_id);
         const completed = await api.runEditingAgentStream(
           session.editing_session_id,
           session.state_version,
@@ -312,8 +354,51 @@ function useWorkspaceController(): WorkspaceController {
         setEditingSession(session);
       }
       const queued = await api.renderEditingSession(session.editing_session_id, session.state_version);
-      const result = await waitForJob(api.getJob, queued.job_id);
+      setActiveJob(queued);
+      const result = await waitForJob(api.getJob, queued.job_id, {
+        onProgress: (job) => {
+          setActiveJob(job);
+          setProgress(job.progress);
+          setProgressLabel(`FFmpeg 正在生成成片 ${Math.round(job.progress * 100)}%`);
+        },
+      });
       setRenderResult(result);
+      setProgressLabel("FFmpeg 成片、SRT 与 ffprobe 元数据已生成");
+      setStatus("ready");
+    } catch (caught) {
+      setError(errorMessage(caught));
+      setStatus("error");
+    }
+  }
+
+  async function handleCancelJob() {
+    if (!activeJob || !["queued", "running"].includes(activeJob.status)) return;
+    try {
+      const cancelled = await api.cancelJob(activeJob.job_id);
+      setActiveJob(cancelled);
+      setError("任务已取消，可以返回编辑或重试。");
+      setStatus("error");
+    } catch (caught) {
+      setError(errorMessage(caught));
+      setStatus("error");
+    }
+  }
+
+  async function handleRetryJob() {
+    if (!activeJob || !["failed", "cancelled", "dead_letter"].includes(activeJob.status)) return;
+    setError(undefined);
+    setStatus(activeJob.kind === "render" ? "rendering" : "uploading");
+    try {
+      const queued = await api.retryJob(activeJob.job_id);
+      setActiveJob(queued);
+      const completed = await waitForJob(api.getJob, queued.job_id, {
+        onProgress: (job) => {
+          setActiveJob(job);
+          setProgress(job.progress);
+        },
+      });
+      setActiveJob(completed);
+      if (completed.kind === "render") setRenderResult(completed);
       setStatus("ready");
     } catch (caught) {
       setError(errorMessage(caught));
@@ -433,7 +518,10 @@ function useWorkspaceController(): WorkspaceController {
     sourceUpload,
     agentRun,
     renderResult,
+    activeJob,
     editingSession,
+    project,
+    page,
     auditEvents,
     queryImageName,
     evidence,
@@ -449,6 +537,12 @@ function useWorkspaceController(): WorkspaceController {
     handleReorderClip,
     handleTrimClip,
     handleSplitClip,
+    showEditingPage: () => setPage("editing"),
+    showProcessingPage: () => setPage("processing"),
+    showRenderPage: () => setPage("render"),
+    handleCancelJob,
+    handleRetryJob,
+    onBack,
   };
 }
 
@@ -461,12 +555,201 @@ function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
+async function copyText(value: string) {
+  try {
+    await navigator.clipboard.writeText(value);
+    return;
+  } catch {
+    const textarea = document.createElement("textarea");
+    textarea.value = value;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    const copied = document.execCommand("copy");
+    textarea.remove();
+    if (!copied) throw new Error("浏览器未授权剪贴板访问");
+  }
+}
+
+function MediaProcessingPage({ workspace }: { workspace: WorkspaceController }) {
+  const job = workspace.activeJob?.kind === "analyze_source" ? workspace.activeJob : undefined;
+  const complete = job?.status === "succeeded" || workspace.uploadedVideo?.status === "ready";
+  const progress = complete ? 1 : Math.max(0, Math.min(1, job?.progress ?? workspace.progress ?? 0));
+  const failed = workspace.status === "error" || Boolean(job && ["failed", "cancelled", "dead_letter"].includes(job.status));
+  const stages = [
+    { label: "上传与 MIME / FFprobe 预检", detail: "用户原片仅作 4 小时临时输入", threshold: 0 },
+    { label: "场景边界与片段提取", detail: "场景优先切分与事件上下文", threshold: 0.08 },
+    { label: "ASR 语音识别", detail: "仅对包含音轨的片段执行", threshold: 0.22 },
+    { label: "缩略图与镜头去重", detail: "生成临时证据和镜头签名", threshold: 0.42 },
+    { label: "质量评分与结构化分析", detail: "画面质量、时长与来源边界", threshold: 0.65 },
+    { label: "可编辑状态", detail: "不创建 Asset，不写入 Milvus", threshold: 1 },
+  ];
+
+  return (
+    <ProductPageFrame workspace={workspace} title="媒体处理状态" subtitle={workspace.project?.name ?? "CamCat 项目"} onBack={workspace.showEditingPage}>
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(380px,0.9fr)_minmax(460px,1.1fr)] gap-5 overflow-hidden px-8 pb-8">
+        <section className="min-h-0 overflow-y-auto rounded-[20px] border border-[#272b2f] bg-[#090a0b] p-7">
+          <div className="flex items-center justify-between border-b border-[#22262a] pb-5">
+            <div>
+              <div className="text-[11px] font-semibold tracking-[0.18em] text-[#737d87]">MEDIA PIPELINE</div>
+              <h2 className="mt-2 text-xl font-semibold text-white">{workspace.sourceUpload?.media[0]?.filename ?? workspace.editingSession?.state.source_media?.[0]?.filename ?? "准备接收原片"}</h2>
+            </div>
+            <JobStatusBadge status={job?.status ?? workspace.status} />
+          </div>
+          <div className="mt-5 space-y-1">
+            {stages.map((stage, index) => {
+              const done = complete || (progress > stage.threshold && index < stages.length - 1);
+              const active = !complete && !failed && progress >= stage.threshold && (index === stages.length - 1 || progress < stages[index + 1].threshold);
+              return (
+                <div key={stage.label} className="relative flex gap-4 pb-6 last:pb-0">
+                  {index < stages.length - 1 && <span className={`absolute left-[15px] top-8 h-[calc(100%-22px)] w-px ${done ? "bg-[#34d399]/50" : "bg-[#30363b]"}`} />}
+                  <span className={`relative z-10 grid h-8 w-8 shrink-0 place-items-center rounded-full border ${done ? "border-[#2f765e] bg-[#123025] text-[#6ee7b7]" : active ? "border-[#60a5fa] bg-[#12243b] text-[#93c5fd]" : "border-[#343a40] bg-[#111315] text-[#69727c]"}`}>
+                    {done ? <Check className="h-4 w-4 stroke-[3]" /> : active ? <Loader2 className="h-4 w-4 animate-spin" /> : <MoreHorizontal className="h-4 w-4" />}
+                  </span>
+                  <div className="min-w-0 pt-1">
+                    <div className={`text-[14px] font-medium ${done ? "text-[#c7f9e5]" : active ? "text-white" : "text-[#7c858e]"}`}>{stage.label}</div>
+                    <div className="mt-1 text-[11px] text-[#68717b]">{stage.detail}</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="min-h-0 overflow-y-auto rounded-[20px] border border-[#272b2f] bg-[#090a0b] p-8">
+          <div className="flex items-start justify-between">
+            <div>
+              <div className="text-[11px] font-semibold tracking-[0.18em] text-[#737d87]">CURRENT TASK</div>
+              <h2 className="mt-3 text-2xl font-semibold text-white">{complete ? "原片分析已完成" : failed ? "处理需要介入" : "正在分析用户原片"}</h2>
+            </div>
+            <span className="font-mono text-3xl font-semibold text-white">{Math.round(progress * 100)}%</span>
+          </div>
+          <div className="mt-8 h-2 overflow-hidden rounded-full bg-[#24282c]">
+            <div className={`h-full rounded-full transition-all duration-500 ${failed ? "bg-[#ef4444]" : "bg-[#45d69a]"}`} style={{ width: `${progress * 100}%` }} />
+          </div>
+          <p className="mt-4 min-h-6 text-[13px] text-[#9aa3ac]">{workspace.error ?? workspace.progressLabel ?? "等待 Worker 返回真实进度"}</p>
+          <dl className="mt-8 grid grid-cols-[150px_1fr] gap-y-5 border-t border-[#22262a] pt-7 text-[13px]">
+            <dt className="text-[#707983]">任务 ID</dt><dd className="truncate font-mono text-[#d7dde2]">{job?.job_id ?? (complete ? "历史任务已完成" : "等待创建")}</dd>
+            <dt className="text-[#707983]">任务类型</dt><dd className="text-[#d7dde2]">{job?.kind ?? "analyze_source"}</dd>
+            <dt className="text-[#707983]">尝试次数</dt><dd className="text-[#d7dde2]">{job ? `${job.attempts}/${job.max_attempts}` : "0/3"}</dd>
+            <dt className="text-[#707983]">媒体数量</dt><dd className="text-[#d7dde2]">{workspace.sourceUpload?.media.length ?? workspace.editingSession?.state.source_media?.length ?? 0}</dd>
+            <dt className="text-[#707983]">分析镜头</dt><dd className="text-[#d7dde2]">{workspace.uploadedVideo?.segment_count ?? (job?.result?.segment_count === undefined ? "处理中" : String(job.result.segment_count))}</dd>
+            <dt className="text-[#707983]">保留策略</dt><dd className="text-[#34d399]">transient-4h-no-asset-no-milvus</dd>
+          </dl>
+          <div className="mt-10 flex flex-wrap gap-3">
+            {complete && <button type="button" onClick={workspace.showEditingPage} className="rounded-[12px] bg-[#f5f7f8] px-5 py-3 text-[13px] font-semibold text-black hover:bg-white">进入编辑计划</button>}
+            {failed && <button type="button" onClick={() => void workspace.handleRetryJob()} className="rounded-[12px] bg-[#f5f7f8] px-5 py-3 text-[13px] font-semibold text-black hover:bg-white">重试任务</button>}
+            {!complete && !failed && <button type="button" onClick={() => void workspace.handleCancelJob()} className="rounded-[12px] border border-[#33383d] bg-[#111315] px-5 py-3 text-[13px] text-[#cbd3da] hover:bg-[#17191b]">取消处理</button>}
+            <button type="button" onClick={workspace.showEditingPage} className="rounded-[12px] border border-[#33383d] bg-[#111315] px-5 py-3 text-[13px] text-[#cbd3da] hover:bg-[#17191b]">返回工作区</button>
+          </div>
+        </section>
+      </div>
+    </ProductPageFrame>
+  );
+}
+
+function RenderStatusPage({ workspace }: { workspace: WorkspaceController }) {
+  const [copyLabel, setCopyLabel] = useState("复制链接");
+  const job = workspace.activeJob?.kind === "render" ? workspace.activeJob : undefined;
+  const output = workspace.renderResult?.result;
+  const progress = Math.max(0, Math.min(1, job?.progress ?? workspace.progress ?? 0));
+  const complete = workspace.renderResult?.status === "succeeded";
+  const failed = workspace.status === "error" || Boolean(job && ["failed", "cancelled", "dead_letter"].includes(job.status));
+  const outputUrl = output?.output_url;
+  const resolution = output?.width && output?.height
+    ? `${output.width} × ${output.height}`
+    : String(workspace.editingSession?.state.settings?.aspect_ratio ?? "自动画幅");
+  return (
+    <ProductPageFrame workspace={workspace} title="导出 / 渲染状态" subtitle={workspace.project?.name ?? "CamCat 项目"} onBack={workspace.showEditingPage}>
+      <div className="min-h-0 flex-1 px-8 pb-8">
+        <section className="mx-auto flex h-full max-w-[1320px] flex-col rounded-[22px] border border-[#292d31] bg-[#090a0b] p-8 shadow-[0_30px_100px_rgba(0,0,0,0.35)]">
+          <div className="flex items-center justify-between border-b border-[#22262a] pb-6">
+            <div>
+              <div className="text-[11px] font-semibold tracking-[0.18em] text-[#737d87]">RENDER JOB</div>
+              <h2 className="mt-2 text-xl font-semibold text-white">{job ? `render_${job.job_id.slice(0, 8)}` : "当前版本尚未渲染"}</h2>
+            </div>
+            <JobStatusBadge status={job?.status ?? workspace.status} />
+          </div>
+          <div className="grid min-h-0 flex-1 grid-cols-[0.85fr_1.15fr] gap-10 pt-8">
+            <div className="flex min-h-0 flex-col">
+              <div className="flex items-end justify-between">
+                <div className="text-3xl font-semibold text-white">{complete ? "渲染完成" : failed ? "渲染失败" : job ? "渲染中" : "等待渲染"}</div>
+                <div className="font-mono text-3xl font-semibold text-white">{Math.round(progress * 100)}%</div>
+              </div>
+              <div className="mt-7 h-3 overflow-hidden rounded-full bg-[#24282c]"><div className={`h-full rounded-full transition-all duration-500 ${failed ? "bg-[#ef4444]" : "bg-[#45d69a]"}`} style={{ width: `${progress * 100}%` }} /></div>
+              <p className="mt-4 text-[13px] text-[#929ca5]">{workspace.error ?? workspace.progressLabel ?? (job ? "正在等待 FFmpeg Worker" : "当前剪辑版本已就绪，确认后开始真实 FFmpeg 渲染")}</p>
+              <dl className="mt-8 grid grid-cols-[110px_1fr] gap-y-5 border-t border-[#22262a] pt-7 text-[14px]">
+                <dt className="text-[#707983]">状态版本</dt><dd className="text-white">v{workspace.editingSession?.state_version ?? 1}</dd>
+                <dt className="text-[#707983]">输出画幅</dt><dd className="text-white">{resolution}</dd>
+                <dt className="text-[#707983]">时长</dt><dd className="text-white">{output?.duration_seconds ? `${output.duration_seconds.toFixed(2)} 秒` : `${Number(workspace.editingSession?.state.target_duration ?? 0).toFixed(1)} 秒`}</dd>
+                <dt className="text-[#707983]">字幕</dt><dd className="text-white">{output?.subtitle_url ? "SRT 已生成并烧录" : "根据剪辑计划烧录"}</dd>
+                <dt className="text-[#707983]">处理器</dt><dd className="font-mono text-white">FFmpeg / ffprobe</dd>
+              </dl>
+              <div className="mt-auto flex flex-wrap gap-3 pt-8">
+                {complete && <button type="button" onClick={workspace.showEditingPage} className="rounded-[12px] bg-[#f5f7f8] px-5 py-3 text-[13px] font-semibold text-black hover:bg-white">确认并返回编辑</button>}
+                {!job && !failed && <button type="button" onClick={() => void workspace.handleRender()} disabled={!workspace.canRender} className="rounded-[12px] bg-[#f5f7f8] px-5 py-3 text-[13px] font-semibold text-black hover:bg-white disabled:cursor-not-allowed disabled:opacity-40">开始渲染</button>}
+                {failed && <button type="button" onClick={() => void workspace.handleRetryJob()} className="rounded-[12px] bg-[#f5f7f8] px-5 py-3 text-[13px] font-semibold text-black hover:bg-white">重试渲染</button>}
+                {job && !complete && !failed && <button type="button" onClick={() => void workspace.handleCancelJob()} className="rounded-[12px] border border-[#33383d] bg-[#111315] px-5 py-3 text-[13px] text-[#cbd3da] hover:bg-[#17191b]">取消渲染</button>}
+                <button type="button" onClick={workspace.showEditingPage} className="rounded-[12px] border border-[#33383d] bg-[#111315] px-5 py-3 text-[13px] text-[#cbd3da] hover:bg-[#17191b]">返回编辑</button>
+              </div>
+            </div>
+            <div className="flex min-h-0 flex-col">
+              <div className="mb-3 text-[13px] text-[#8f99a3]">成片预览</div>
+              <div className="grid min-h-[360px] flex-1 place-items-center overflow-hidden rounded-[18px] border border-[#282d31] bg-black">
+                {outputUrl ? <video data-testid="render-output-video" src={outputUrl} controls playsInline className="h-full max-h-[560px] w-full object-contain" /> : <div className="flex flex-col items-center gap-4 text-[#66707a]"><Loader2 className="h-10 w-10 animate-spin" /><span>{failed ? "未生成可播放产物" : "等待真实渲染产物"}</span></div>}
+              </div>
+              <div className="mt-4 flex items-center gap-3 rounded-[14px] border border-[#272b2f] bg-[#111315] p-3">
+                <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-[#8a949e]">{outputUrl ?? "成功后返回 MinIO 短时签名地址"}</span>
+                <button type="button" disabled={!outputUrl} onClick={() => { if (!outputUrl) return; void copyText(outputUrl).then(() => { setCopyLabel("已复制"); window.setTimeout(() => setCopyLabel("复制链接"), 1600); }); }} className="rounded-[10px] border border-[#343a40] px-4 py-2 text-[12px] text-white disabled:opacity-40">{copyLabel}</button>
+                <a href={output?.download_url ?? outputUrl} download aria-disabled={!outputUrl} className="rounded-[10px] bg-[#f5f7f8] px-4 py-2 text-[12px] font-semibold text-black aria-disabled:pointer-events-none aria-disabled:opacity-40">下载</a>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </ProductPageFrame>
+  );
+}
+
+function ProductPageFrame({ workspace, title, subtitle, onBack, children }: { workspace: WorkspaceController; title: string; subtitle: string; onBack?: () => void; children: React.ReactNode }) {
+  return (
+    <div className="grid h-screen w-full max-w-[1540px] grid-cols-[96px_minmax(0,1fr)] overflow-hidden bg-[radial-gradient(circle_at_50%_-20%,#111820_0%,#050607_42%,#030404_100%)] text-[#c9d0d6]">
+      <ProductRail workspace={workspace} />
+      <div className="flex min-w-0 flex-col overflow-hidden">
+        <header className="flex h-[78px] shrink-0 items-center justify-between border-b border-[#202326] px-8">
+          <button type="button" onClick={workspace.onBack} className="flex items-center gap-3 text-white" aria-label="返回项目列表">
+            <PixelCatLogo className="h-8 w-8" /><span className="text-[25px] font-black">CamCat</span>
+          </button>
+          <div className="text-center"><h1 className="text-[16px] font-semibold text-white">{title}</h1><div className="mt-1 text-[10px] text-[#707983]">{subtitle}</div></div>
+          <button type="button" onClick={onBack} className="inline-flex items-center gap-2 rounded-[11px] border border-[#2b3035] bg-[#0d0f10] px-4 py-2.5 text-[12px] text-[#d7dde2] hover:bg-[#141719]"><ArrowLeft className="h-4 w-4" />返回编辑</button>
+        </header>
+        <div className="px-8 py-6"><div className="text-[11px] font-semibold tracking-[0.24em] text-[#65707a]">CAMCAT WORKFLOW</div><div className="mt-2 text-[28px] font-semibold text-white">{title}</div></div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function JobStatusBadge({ status }: { status: string }) {
+  const failed = ["failed", "cancelled", "dead_letter", "error"].includes(status);
+  const done = status === "succeeded" || status === "ready";
+  return <span className={`rounded-full border px-3 py-1.5 font-mono text-[11px] ${failed ? "border-[#7f1d1d] bg-[#2a1010] text-[#fca5a5]" : done ? "border-[#235d48] bg-[#0d241b] text-[#6ee7b7]" : "border-[#1d4d68] bg-[#0b1d27] text-[#7dd3fc]"}`}>{status}</span>;
+}
+
 function AppShell({ workspace }: { workspace: WorkspaceController }) {
+  if (workspace.page === "processing") {
+    return <MediaProcessingPage workspace={workspace} />;
+  }
+  if (workspace.page === "render") {
+    return <RenderStatusPage workspace={workspace} />;
+  }
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-[#030404] font-sans text-[12px] text-[#c9d0d6] antialiased">
       <TopHeader workspace={workspace} />
       <div className="grid min-h-0 flex-1 grid-cols-[96px_minmax(0,1fr)] max-[1500px]:grid-cols-[88px_minmax(0,1fr)] max-[1180px]:grid-cols-[84px_minmax(0,1fr)]">
-        <LeftRail />
+        <ProductRail workspace={workspace} />
         <main className="grid min-h-0 grid-cols-[400px_minmax(600px,1fr)_540px] overflow-hidden bg-[#030404] max-[1500px]:grid-cols-[360px_minmax(560px,1fr)_500px] max-[1180px]:grid-cols-[340px_minmax(560px,1fr)]">
           <EvidencePanel workspace={workspace} />
           <EditorWorkspace workspace={workspace} />
@@ -490,10 +773,10 @@ function TopHeader({ workspace }: { workspace: WorkspaceController }) {
   return (
     <header className="grid h-[72px] grid-cols-[minmax(360px,1fr)_420px_minmax(360px,1fr)] items-center border-b border-[#1b1d1f] bg-[#050606] px-5 shadow-[0_1px_0_rgba(255,255,255,0.02)]">
       <div className="flex min-w-0 items-center gap-3">
-        <div className="flex shrink-0 items-center gap-2 pr-2 text-white">
+        <button type="button" onClick={workspace.onBack} aria-label="返回项目列表" className="flex shrink-0 items-center gap-2 pr-2 text-white transition hover:opacity-80">
           <PixelCatLogo className="h-8 w-8" />
           <span className="text-[26px] font-black leading-none tracking-normal">CamCat</span>
-        </div>
+        </button>
         <span className="h-5 w-px shrink-0 bg-[#25282b]" />
         <button
           type="button"
@@ -501,7 +784,7 @@ function TopHeader({ workspace }: { workspace: WorkspaceController }) {
           title="在 Agent 输入框中修改当前剪辑目标"
           className="flex min-w-0 max-w-[390px] items-center gap-1.5 text-left text-[12px] text-[#d7dde2] transition hover:text-white"
         >
-          <span className="truncate">{workspace.editingSession?.state.title ?? workspace.uploadedVideo?.filename ?? "未命名剪辑"}</span>
+          <span className="truncate">{workspace.editingSession?.state.title ?? workspace.uploadedVideo?.filename ?? workspace.project?.name ?? "未命名剪辑"}</span>
           <ChevronDown className="h-3.5 w-3.5 shrink-0 text-[#707983]" />
         </button>
         <span className="rounded-md border border-[#25282b] bg-[#111213] px-2 py-0.5 text-[10px] text-[#a9b0b8]">
@@ -548,7 +831,7 @@ function TopHeader({ workspace }: { workspace: WorkspaceController }) {
         <button
           type="button"
           onClick={async () => {
-            await navigator.clipboard.writeText(window.location.href);
+            await copyText(window.location.href);
             setShareLabel("Copied");
             window.setTimeout(() => setShareLabel("Share"), 1600);
           }}
@@ -582,26 +865,29 @@ function TopHeader({ workspace }: { workspace: WorkspaceController }) {
   );
 }
 
-function LeftRail() {
+function ProductRail({ workspace }: { workspace: WorkspaceController }) {
   const navItems = [
-    { label: "Evidence", icon: Boxes, target: "evidence-section" },
-    { label: "State", icon: CircleDot, target: "state-section" },
-    { label: "Trace", icon: Activity, target: "trace-section" },
-    { label: "Artifacts", icon: Folder, target: "artifacts-section" },
+    { label: "项目列表", icon: BriefcaseBusiness, page: "projects" as const, action: workspace.onBack },
+    { label: "媒体处理", icon: Activity, page: "processing" as const, action: workspace.showProcessingPage },
+    { label: "编辑计划", icon: Scissors, page: "editing" as const, action: workspace.showEditingPage },
+    { label: "导出渲染", icon: Download, page: "render" as const, action: workspace.showRenderPage },
   ];
 
   return (
     <aside className="flex min-h-0 flex-col justify-between border-r border-[#1b1d1f] bg-[#050606]">
       <div>
         <nav className="space-y-2 px-2.5 pt-4">
-          {navItems.map(({ label, icon: Icon, target }, index) => (
+          {navItems.map(({ label, icon: Icon, page, action }) => {
+            const active = page === workspace.page;
+            return (
             <button
               key={label}
               type="button"
-              onClick={() => document.getElementById(target)?.scrollIntoView({ behavior: "smooth", block: "start" })}
-              aria-label={`定位到 ${label}`}
+              onClick={action}
+              aria-label={label}
+              aria-current={active ? "page" : undefined}
               className={`flex h-[64px] w-full flex-col items-center justify-center gap-1.5 rounded-[10px] border transition ${
-                index === 0
+                active
                   ? "border-[#2a2d31] bg-[#121314] text-[#f5f7f8] shadow-[0_12px_30px_rgba(0,0,0,0.22)]"
                   : "border-transparent text-[#69717b] hover:bg-[#0d0e0f] hover:text-[#c3cbd2]"
               }`}
@@ -609,12 +895,12 @@ function LeftRail() {
               <Icon className="h-4.5 w-4.5" />
               <span className="text-[10px]">{label}</span>
             </button>
-          ))}
+          );})}
         </nav>
       </div>
       <div className="flex flex-col items-center gap-2 px-2.5 pb-4 text-[#6b7280]">
-        <RailIcon icon={HelpCircle} label="API 帮助" onClick={() => window.open("http://127.0.0.1:8000/docs", "_blank")} />
-        <RailIcon icon={Settings} label="后端状态" onClick={() => window.open("http://127.0.0.1:8000/health/ready", "_blank")} />
+        <RailIcon icon={HelpCircle} label="API 帮助" onClick={() => window.open("/docs", "_blank")} />
+        <RailIcon icon={Settings} label="后端状态" onClick={() => window.open("/health/ready", "_blank")} />
       </div>
     </aside>
   );
@@ -792,48 +1078,21 @@ function workflowStepCurrent(step: string, workspace: WorkspaceController): bool
 function RouteStateCard({ workspace }: { workspace: WorkspaceController }) {
   return (
     <div className="rounded-[14px] border border-[#1b1d1f] bg-[#070808] p-4">
-      <div className="relative grid grid-cols-4 gap-x-4 gap-y-5">
-        <RouteConnector className="left-[13%] top-[18px] w-[24%]" />
-        <RouteConnector className="left-[39%] top-[18px] w-[24%]" />
-        <RouteConnector className="left-[65%] top-[18px] w-[22%]" />
-        <RouteConnector className="left-[13%] bottom-[18px] w-[24%]" />
-        <RouteConnector className="left-[39%] bottom-[18px] w-[24%]" />
-        <RouteConnector vertical className="right-[12%] top-[18px] h-[55px]" />
-        {workflowSteps.slice(0, 4).map((step) => (
-          <RouteNode
-            key={step}
-            label={step}
-            complete={workflowStepCompleted(step, workspace)}
-            active={workflowStepCurrent(step, workspace)}
-          />
-        ))}
-        <div />
-        {workflowSteps.slice(4).map((step) => (
-          <RouteNode
-            key={step}
-            label={step}
-            complete={workflowStepCompleted(step, workspace)}
-            active={workflowStepCurrent(step, workspace)}
-          />
+      <div className="flex items-start">
+        {workflowSteps.map((step, index) => (
+          <React.Fragment key={step}>
+            {index > 0 && <span aria-hidden="true" className="mt-4 min-w-2 flex-1 border-t border-dashed border-[#3a4249]" />}
+            <RouteNode label={step} complete={workflowStepCompleted(step, workspace)} active={workflowStepCurrent(step, workspace)} />
+          </React.Fragment>
         ))}
       </div>
     </div>
   );
 }
 
-function RouteConnector({ className, vertical }: { className: string; vertical?: boolean }) {
-  return (
-    <span
-      className={`pointer-events-none absolute border-[#2e3439] ${
-        vertical ? "border-l border-dashed" : "border-t border-dashed"
-      } ${className}`}
-    />
-  );
-}
-
 function RouteNode({ label, active, complete }: { label: string; active?: boolean; complete?: boolean }) {
   return (
-    <div className="relative z-10 flex flex-col items-center gap-1.5">
+    <div className="relative z-10 flex w-9 shrink-0 flex-col items-center gap-1.5">
       <div
         className={`grid h-8 w-8 place-items-center rounded-full border ${
           active
@@ -921,7 +1180,7 @@ function ArtifactsPanel({ workspace }: { workspace: WorkspaceController }) {
           </div>
           <div className="flex items-center gap-1 text-[#6f7882]">
             <SmallIconButton icon={Download} label={`下载 ${title}`} onClick={() => url && window.open(url, "_blank")} disabled={!url} />
-            <SmallIconButton icon={MoreHorizontal} label={`复制 ${title} 地址`} onClick={() => void navigator.clipboard.writeText(url ?? title)} />
+            <SmallIconButton icon={MoreHorizontal} label={`复制 ${title} 地址`} onClick={() => void copyText(url ?? title)} />
           </div>
         </div>
       ))}

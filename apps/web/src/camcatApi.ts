@@ -8,6 +8,18 @@ import type {
 
 export type FetchLike = typeof fetch;
 
+export type ProjectResponse = {
+  project_id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PageResponse<T> = {
+  items: T[];
+  next_cursor?: string;
+};
+
 export type UploadedVideoResponse = {
   video_id: string;
   status: string;
@@ -95,6 +107,8 @@ export type EditingState = {
   clips?: Array<Record<string, unknown>>;
   subtitles?: Array<Record<string, unknown>>;
   settings?: Record<string, unknown>;
+  source_media?: SourceMediaReference[];
+  source_segments?: Array<Record<string, unknown>>;
 };
 
 export type EditingSessionResponse = Omit<EditingSessionDto, "state"> & {
@@ -111,6 +125,7 @@ export type JobResponse = Omit<JobDto, "status" | "result"> & {
   progress: number;
   result?: {
     output_url?: string;
+    download_url?: string;
     subtitle_url?: string;
     duration_seconds?: number;
     file_size?: number;
@@ -162,7 +177,7 @@ export type WorkspaceRunView = {
 
 type ClientOptions = { baseUrl: string; userId: string; fetchImpl?: FetchLike };
 type RequestOptions = {
-  method: "GET" | "POST" | "PATCH";
+  method: "GET" | "POST" | "PATCH" | "DELETE";
   body?: BodyInit | string;
   headers?: Record<string, string>;
 };
@@ -192,6 +207,15 @@ export function createCamCatApiClient({ baseUrl, userId, fetchImpl = fetch }: Cl
   }
 
   return {
+    listProjects(cursor?: string) {
+      const suffix = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+      return requestJson<PageResponse<ProjectResponse>>(`/api/v1/projects${suffix}`, { method: "GET" });
+    },
+
+    createProject(name: string) {
+      return json<ProjectResponse>("/api/v1/projects", "POST", { name });
+    },
+
     uploadSourceMedia(files: File[], analysisMode: "keyframes" | "per-second" = "keyframes") {
       const form = new FormData();
       files.forEach((file) => form.append("files", file));
@@ -233,6 +257,23 @@ export function createCamCatApiClient({ baseUrl, userId, fetchImpl = fetch }: Cl
       return requestJson<JobResponse>(`/api/v1/jobs/${encodeURIComponent(jobId)}`, { method: "GET" });
     },
 
+    listJobs(cursor?: string) {
+      const suffix = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+      return requestJson<PageResponse<JobResponse>>(`/api/v1/jobs${suffix}`, { method: "GET" });
+    },
+
+    cancelJob(jobId: string) {
+      return requestJson<JobResponse>(`/api/v1/jobs/${encodeURIComponent(jobId)}/cancel`, {
+        method: "POST",
+      });
+    },
+
+    retryJob(jobId: string) {
+      return requestJson<JobResponse>(`/api/v1/jobs/${encodeURIComponent(jobId)}/retry`, {
+        method: "POST",
+      });
+    },
+
     runAgenticSearch(queryText: string, topK = 8, queryImageBase64?: string) {
       return json<AgenticSearchResponse>("/api/v1/search/agentic", "POST", {
         query_text: queryText || undefined,
@@ -247,11 +288,23 @@ export function createCamCatApiClient({ baseUrl, userId, fetchImpl = fetch }: Cl
       videoId: string | undefined,
       currentGoal: string,
       sourceJobId?: string,
+      projectId?: string,
     ) {
       return json<EditingSessionResponse>("/api/v1/editing/sessions", "POST", {
+        project_id: projectId,
         video_id: videoId,
         source_job_id: sourceJobId,
         current_goal: currentGoal,
+      });
+    },
+
+    listEditingSessions(projectId?: string, cursor?: string) {
+      const params = new URLSearchParams();
+      if (projectId) params.set("project_id", projectId);
+      if (cursor) params.set("cursor", cursor);
+      const suffix = params.size ? `?${params.toString()}` : "";
+      return requestJson<PageResponse<EditingSessionResponse>>(`/api/v1/editing/sessions${suffix}`, {
+        method: "GET",
       });
     },
 
@@ -260,6 +313,12 @@ export function createCamCatApiClient({ baseUrl, userId, fetchImpl = fetch }: Cl
         `/api/v1/editing/sessions/${encodeURIComponent(editingSessionId)}`,
         { method: "GET" },
       );
+    },
+
+    async deleteEditingSession(editingSessionId: string) {
+      await requestJson<unknown>(`/api/v1/editing/sessions/${encodeURIComponent(editingSessionId)}`, {
+        method: "DELETE",
+      });
     },
 
     getEditingSessionAudit(editingSessionId: string) {
@@ -434,6 +493,7 @@ export async function runSearchAndPlan(
     query: string;
     uploadedVideoId?: string;
     sourceJobId?: string;
+    projectId?: string;
     currentSession?: EditingSessionResponse;
     queryImageBase64?: string;
     topK?: number;
@@ -447,7 +507,7 @@ export async function runSearchAndPlan(
 
   const session =
     options.currentSession ??
-    (await api.createEditingSession(sourceVideoId, options.query, options.sourceJobId));
+    (await api.createEditingSession(sourceVideoId, options.query, options.sourceJobId, options.projectId));
   const completed = await api.runEditingAgentStream(
     session.editing_session_id,
     session.state_version,
