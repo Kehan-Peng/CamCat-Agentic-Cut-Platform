@@ -1,7 +1,6 @@
 import React, { useMemo, useRef, useState } from "react";
 import {
   Activity,
-  ArrowLeft,
   ArrowUp,
   Boxes,
   BriefcaseBusiness,
@@ -40,6 +39,7 @@ import {
   createCamCatApiClient,
   mapAgenticRunToWorkspace,
   runSearchAndPlan,
+  userFacingErrorMessage,
   waitForJob,
   type AgenticSearchResponse,
   type AuditEvent,
@@ -588,7 +588,7 @@ function MediaProcessingPage({ workspace }: { workspace: WorkspaceController }) 
   ];
 
   return (
-    <ProductPageFrame workspace={workspace} title="媒体处理状态" subtitle={workspace.project?.name ?? "CamCat 项目"} onBack={workspace.showEditingPage}>
+    <ProductPageFrame title="媒体处理状态" subtitle={workspace.project?.name ?? "CamCat 项目"}>
       <div className="grid min-h-0 flex-1 grid-cols-[minmax(380px,0.9fr)_minmax(460px,1.1fr)] gap-5 overflow-hidden px-8 pb-8">
         <section className="min-h-0 overflow-y-auto rounded-[20px] border border-[#272b2f] bg-[#090a0b] p-7">
           <div className="flex items-center justify-between border-b border-[#22262a] pb-5">
@@ -662,7 +662,7 @@ function RenderStatusPage({ workspace }: { workspace: WorkspaceController }) {
     ? `${output.width} × ${output.height}`
     : String(workspace.editingSession?.state.settings?.aspect_ratio ?? "自动画幅");
   return (
-    <ProductPageFrame workspace={workspace} title="导出 / 渲染状态" subtitle={workspace.project?.name ?? "CamCat 项目"} onBack={workspace.showEditingPage}>
+    <ProductPageFrame title="导出 / 渲染状态" subtitle={workspace.project?.name ?? "CamCat 项目"}>
       <div className="min-h-0 flex-1 px-8 pb-8">
         <section className="mx-auto flex h-full max-w-[1320px] flex-col rounded-[22px] border border-[#292d31] bg-[#090a0b] p-8 shadow-[0_30px_100px_rgba(0,0,0,0.35)]">
           <div className="flex items-center justify-between border-b border-[#22262a] pb-6">
@@ -713,22 +713,12 @@ function RenderStatusPage({ workspace }: { workspace: WorkspaceController }) {
   );
 }
 
-function ProductPageFrame({ workspace, title, subtitle, onBack, children }: { workspace: WorkspaceController; title: string; subtitle: string; onBack?: () => void; children: React.ReactNode }) {
+function ProductPageFrame({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
   return (
-    <div className="grid h-screen w-full max-w-[1540px] grid-cols-[96px_minmax(0,1fr)] overflow-hidden bg-[radial-gradient(circle_at_50%_-20%,#111820_0%,#050607_42%,#030404_100%)] text-[#c9d0d6]">
-      <ProductRail workspace={workspace} />
-      <div className="flex min-w-0 flex-col overflow-hidden">
-        <header className="flex h-[78px] shrink-0 items-center justify-between border-b border-[#202326] px-8">
-          <button type="button" onClick={workspace.onBack} className="flex items-center gap-3 text-white" aria-label="返回项目列表">
-            <PixelCatLogo className="h-8 w-8" /><span className="text-[25px] font-black">CamCat</span>
-          </button>
-          <div className="text-center"><h1 className="text-[16px] font-semibold text-white">{title}</h1><div className="mt-1 text-[10px] text-[#707983]">{subtitle}</div></div>
-          <button type="button" onClick={onBack} className="inline-flex items-center gap-2 rounded-[11px] border border-[#2b3035] bg-[#0d0f10] px-4 py-2.5 text-[12px] text-[#d7dde2] hover:bg-[#141719]"><ArrowLeft className="h-4 w-4" />返回编辑</button>
-        </header>
-        <div className="px-8 py-6"><div className="text-[11px] font-semibold tracking-[0.24em] text-[#65707a]">CAMCAT WORKFLOW</div><div className="mt-2 text-[28px] font-semibold text-white">{title}</div></div>
-        {children}
-      </div>
-    </div>
+    <main data-testid="product-content" className="flex min-h-0 w-full max-w-[1444px] flex-col overflow-hidden border-r border-[#1b1d1f] bg-[radial-gradient(circle_at_50%_-20%,#111820_0%,#050607_42%,#030404_100%)] text-[#c9d0d6]">
+      <div className="px-8 py-6"><div className="text-[11px] font-semibold tracking-[0.24em] text-[#65707a]">CAMCAT WORKFLOW · {subtitle}</div><div className="mt-2 text-[28px] font-semibold text-white">{title}</div></div>
+      {children}
+    </main>
   );
 }
 
@@ -739,22 +729,22 @@ function JobStatusBadge({ status }: { status: string }) {
 }
 
 function AppShell({ workspace }: { workspace: WorkspaceController }) {
-  if (workspace.page === "processing") {
-    return <MediaProcessingPage workspace={workspace} />;
-  }
-  if (workspace.page === "render") {
-    return <RenderStatusPage workspace={workspace} />;
-  }
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-[#030404] font-sans text-[12px] text-[#c9d0d6] antialiased">
       <TopHeader workspace={workspace} />
-      <div className="grid min-h-0 flex-1 grid-cols-[96px_minmax(0,1fr)] max-[1500px]:grid-cols-[88px_minmax(0,1fr)] max-[1180px]:grid-cols-[84px_minmax(0,1fr)]">
+      <div className="grid min-h-0 flex-1" style={{ gridTemplateColumns: "96px minmax(0, 1fr)" }}>
         <ProductRail workspace={workspace} />
-        <main className="grid min-h-0 grid-cols-[400px_minmax(600px,1fr)_540px] overflow-hidden bg-[#030404] max-[1500px]:grid-cols-[360px_minmax(560px,1fr)_500px] max-[1180px]:grid-cols-[340px_minmax(560px,1fr)]">
-          <EvidencePanel workspace={workspace} />
-          <EditorWorkspace workspace={workspace} />
-          <AgentChatPanel workspace={workspace} />
-        </main>
+        {workspace.page === "processing" ? (
+          <MediaProcessingPage workspace={workspace} />
+        ) : workspace.page === "render" ? (
+          <RenderStatusPage workspace={workspace} />
+        ) : (
+          <main className="grid min-h-0 grid-cols-[400px_minmax(600px,1fr)_540px] overflow-hidden bg-[#030404] max-[1500px]:grid-cols-[360px_minmax(560px,1fr)_500px] max-[1180px]:grid-cols-[340px_minmax(560px,1fr)]">
+            <EvidencePanel workspace={workspace} />
+            <EditorWorkspace workspace={workspace} />
+            <AgentChatPanel workspace={workspace} />
+          </main>
+        )}
       </div>
     </div>
   );
@@ -771,7 +761,7 @@ function TopHeader({ workspace }: { workspace: WorkspaceController }) {
         : "Not started";
 
   return (
-    <header className="grid h-[72px] grid-cols-[minmax(360px,1fr)_420px_minmax(360px,1fr)] items-center border-b border-[#1b1d1f] bg-[#050606] px-5 shadow-[0_1px_0_rgba(255,255,255,0.02)]">
+    <header data-testid="app-header" className="grid h-[72px] shrink-0 grid-cols-[minmax(360px,1fr)_420px_minmax(360px,1fr)] items-center border-b border-[#1b1d1f] bg-[#050606] px-5 shadow-[0_1px_0_rgba(255,255,255,0.02)]">
       <div className="flex min-w-0 items-center gap-3">
         <button type="button" onClick={workspace.onBack} aria-label="返回项目列表" className="flex shrink-0 items-center gap-2 pr-2 text-white transition hover:opacity-80">
           <PixelCatLogo className="h-8 w-8" />
@@ -874,7 +864,7 @@ function ProductRail({ workspace }: { workspace: WorkspaceController }) {
   ];
 
   return (
-    <aside className="flex min-h-0 flex-col justify-between border-r border-[#1b1d1f] bg-[#050606]">
+    <aside data-testid="product-navigation" className="flex min-h-0 flex-col justify-between border-r border-[#1b1d1f] bg-[#050606]">
       <div>
         <nav className="space-y-2 px-2.5 pt-4">
           {navItems.map(({ label, icon: Icon, page, action }) => {
@@ -1212,8 +1202,8 @@ function EditorWorkspace({ workspace }: { workspace: WorkspaceController }) {
   return (
     <section id="editor-workspace" className="flex min-h-0 min-w-0 flex-col border-r border-[#1b1d1f] bg-[#050606]">
       <EditorToolbar mode={workspaceMode} onModeChange={setWorkspaceMode} fitMode={fitMode} onFitModeChange={setFitMode} aspectRatio={aspectRatio} />
-      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden p-4">
-        <div className="flex min-h-0 flex-1 items-center justify-center">
+      <div data-testid="editor-scroll-region" role="region" aria-label="可滚动视频编辑区域" tabIndex={0} className="flex min-h-0 flex-1 flex-col gap-3 overflow-x-hidden overflow-y-auto p-4 outline-none [scrollbar-color:#31363b_#080909] [scrollbar-width:thin] focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[#5aa8d0]">
+        <div className="flex min-h-[360px] shrink-0 items-center justify-center">
           <VideoPreview workspace={workspace} fitMode={fitMode} reviewMode={workspaceMode === "review"} />
         </div>
         <PlayerControls duration={visiblePlan.length ? timelineDuration : 0} aspectRatio={aspectRatio} />
@@ -2027,5 +2017,5 @@ function formatTime(value: number) {
 }
 
 function errorMessage(caught: unknown) {
-  return caught instanceof Error ? caught.message : "未知错误";
+  return userFacingErrorMessage(caught instanceof Error ? caught.message : "未知错误");
 }

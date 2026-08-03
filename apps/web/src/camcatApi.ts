@@ -182,6 +182,16 @@ type RequestOptions = {
   headers?: Record<string, string>;
 };
 
+export function userFacingErrorMessage(message: string): string {
+  if (/Bailian transport failure|transient provider response 502/i.test(message)) {
+    return "无法连接阿里云百炼。请检查 CAMCAT_BAILIAN_API_HOST 是否为可访问的工作空间根地址，并确认已配置有效 API Key；修改 .env 后需重启 api、worker 和 provider-gateway。";
+  }
+  if (/Bailian rejected the request with HTTP (401|403)/i.test(message)) {
+    return "阿里云百炼拒绝了凭据。请更新 CAMCAT_BAILIAN_API_KEY，并重启 api、worker 和 provider-gateway。";
+  }
+  return message;
+}
+
 export function createCamCatApiClient({ baseUrl, userId, fetchImpl = fetch }: ClientOptions) {
   const normalizedBaseUrl = baseUrl.replace(/\/+$/, "");
 
@@ -475,7 +485,7 @@ export async function waitForJob(
     options.onProgress?.(job);
     if (job.status === "succeeded") return job;
     if (job.status === "failed" || job.status === "cancelled" || job.status === "dead_letter") {
-      throw new Error(job.error || `job ${jobId} ${job.status}`);
+      throw new Error(userFacingErrorMessage(job.error || `job ${jobId} ${job.status}`));
     }
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
@@ -598,11 +608,11 @@ function extractErrorDetail(payload: unknown) {
   if (payload && typeof payload === "object") {
     if ("error" in payload) {
       const error = (payload as { error?: { message?: unknown } }).error;
-      if (typeof error?.message === "string") return error.message;
+      if (typeof error?.message === "string") return userFacingErrorMessage(error.message);
     }
     if ("detail" in payload) {
       const detail = (payload as { detail?: unknown }).detail;
-      return typeof detail === "string" ? detail : JSON.stringify(detail);
+      return userFacingErrorMessage(typeof detail === "string" ? detail : JSON.stringify(detail));
     }
   }
   return "Unexpected backend error";

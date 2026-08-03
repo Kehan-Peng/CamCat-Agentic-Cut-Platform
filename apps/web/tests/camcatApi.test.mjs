@@ -154,6 +154,24 @@ test("structured backend errors expose the conflict message", async () => {
   await assert.rejects(() => client.renderEditingSession("s1", 3), /状态已更新/);
 });
 
+test("Bailian transport failures become actionable configuration errors", async () => {
+  const { createCamCatApiClient } = await loadApiModule();
+  const client = createCamCatApiClient({
+    baseUrl: "http://camcat.test",
+    userId: "designer",
+    fetchImpl: async () =>
+      response(
+        { detail: "transient provider response 502: {\"detail\":\"Bailian transport failure: ConnectError\"}" },
+        { status: 502 },
+      ),
+  });
+
+  await assert.rejects(
+    () => client.runAgenticSearch("测试百炼连接"),
+    /无法连接阿里云百炼.*CAMCAT_BAILIAN_API_HOST.*API Key/,
+  );
+});
+
 test("job polling reports real progress before completion", async () => {
   const { waitForJob } = await loadApiModule();
   const jobs = [

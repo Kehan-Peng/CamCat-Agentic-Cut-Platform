@@ -31,7 +31,9 @@ class Settings(BaseSettings):
 
     milvus_uri: str = "http://milvus:19530"
     milvus_token: SecretStr = SecretStr("")
-    milvus_collection: str = "camcat_segments_v6"
+    # v7 adds source/license/semantic fields required for explainable retrieval.
+    # Do not repurpose an older collection in place: it can contain incompatible rows.
+    milvus_collection: str = "camcat_segments_v7"
 
     embedding_base_url: str
     embedding_api_key: SecretStr
@@ -87,6 +89,32 @@ class Settings(BaseSettings):
                 raise ValueError("multi-user mode requires CAMCAT_TRUSTED_PROXY_SECRET")
             if not self.library_admin_key.get_secret_value():
                 raise ValueError("multi-user mode requires CAMCAT_LIBRARY_ADMIN_KEY")
+            if self.provider_gateway_api_key.get_secret_value() == "camcat-local-gateway":
+                raise ValueError(
+                    "multi-user mode requires a private CAMCAT_PROVIDER_GATEWAY_API_KEY"
+                )
+        provider_urls = (
+            self.embedding_base_url,
+            self.reranker_base_url,
+            self.llm_base_url,
+            self.asr_base_url,
+        )
+        if self.security_mode == "local-single-user" and any(
+            "provider-gateway" in url for url in provider_urls
+        ):
+            gateway_key = (
+                self.provider_gateway_api_key.get_secret_value()
+                or "camcat-local-gateway"
+            )
+            self.provider_gateway_api_key = SecretStr(gateway_key)
+            if not self.embedding_api_key.get_secret_value():
+                self.embedding_api_key = SecretStr(gateway_key)
+            if not self.reranker_api_key.get_secret_value():
+                self.reranker_api_key = SecretStr(gateway_key)
+            if not self.llm_api_key.get_secret_value():
+                self.llm_api_key = SecretStr(gateway_key)
+            if not self.asr_api_key.get_secret_value():
+                self.asr_api_key = SecretStr(gateway_key)
         if self.environment != "test":
             provider_values = {
                 "CAMCAT_EMBEDDING_BASE_URL": self.embedding_base_url,
@@ -111,13 +139,8 @@ class Settings(BaseSettings):
                     "placeholder provider configuration is forbidden outside test mode: "
                     + ", ".join(placeholders)
                 )
-            provider_urls = {
-                self.embedding_base_url,
-                self.reranker_base_url,
-                self.llm_base_url,
-                self.asr_base_url,
-            }
-            if any("provider-gateway" in url for url in provider_urls):
+            provider_url_set = set(provider_urls)
+            if any("provider-gateway" in url for url in provider_url_set):
                 gateway_key = self.provider_gateway_api_key.get_secret_value()
                 bailian_key = self.bailian_api_key.get_secret_value()
                 if not gateway_key or not self.bailian_api_host or not bailian_key:
@@ -135,6 +158,7 @@ class Settings(BaseSettings):
                     for name, value in bailian_values.items()
                     if "change-me" in value.lower()
                     or "placeholder" in value.lower()
+                    or ".example" in value.lower()
                     or ".invalid" in value.lower()
                 ]
                 if bailian_placeholders:

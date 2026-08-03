@@ -1,6 +1,6 @@
 /** @type {import('tailwindcss').Config} */
 export default {
-  content: ["./index.html", "./src/**/*.{ts,tsx}", "./CamCatWorkspacePage.tsx"],
+  content: ["./index.html", "./src/**/*.{ts,tsx}", "./*.tsx"],
   theme: {
     extend: {},
   },

@@ -3,6 +3,9 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const source = await readFile(new URL("../CamCatWorkspacePage.tsx", import.meta.url), "utf8");
+const appSource = await readFile(new URL("../CamCatApp.tsx", import.meta.url), "utf8");
+const tailwindSource = await readFile(new URL("../tailwind.config.js", import.meta.url), "utf8");
+const nginxSource = await readFile(new URL("../nginx.conf", import.meta.url), "utf8");
 
 test("idle workspace never presents seeded evidence or completed production work", () => {
   for (const forbidden of [
@@ -38,4 +41,36 @@ test("pixel cat uses the design outline instead of scattered mosaic pixels", () 
 test("the first search runs retrieval and plan generation as one workflow", () => {
   assert.match(source, /runSearchAndPlan/);
   assert.match(source, /setEditingSession\(result\.editingSession\)/);
+});
+
+test("project navigation stays beside content with an explicit two-column layout", () => {
+  assert.match(appSource, /data-testid="project-layout"/);
+  assert.match(appSource, /gridTemplateColumns:\s*"96px minmax\(0, 1fr\)"/);
+  assert.doesNotMatch(appSource, /grid-cols-\[112px_minmax\(0,1fr\)\]/);
+});
+
+test("Tailwind scans every top-level React product page", () => {
+  assert.match(tailwindSource, /\.\/\*\.tsx/);
+});
+
+test("the editor center column is a real vertical scroll region", () => {
+  assert.match(source, /data-testid="editor-scroll-region"/);
+  assert.match(source, /overflow-y-auto/);
+  assert.match(source, /min-h-\[360px\].*shrink-0/s);
+});
+
+test("workspace chrome remains outside product-page conditionals", () => {
+  const shellStart = source.indexOf("function AppShell");
+  const shellEnd = source.indexOf("function TopHeader");
+  const shell = source.slice(shellStart, shellEnd);
+  assert.match(shell, /<TopHeader workspace=\{workspace\} \/>/);
+  assert.match(shell, /<ProductRail workspace=\{workspace\} \/>/);
+  assert.match(shell, /workspace\.page === "processing"/);
+  assert.match(shell, /workspace\.page === "render"/);
+});
+
+test("same-origin proxy re-resolves the API after Compose service recreation", () => {
+  assert.match(nginxSource, /resolver 127\.0\.0\.11 valid=10s;/);
+  assert.match(nginxSource, /set \$camcat_api http:\/\/api:8000;/);
+  assert.match(nginxSource, /proxy_pass \$camcat_api;/);
 });
