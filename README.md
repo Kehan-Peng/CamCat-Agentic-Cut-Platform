@@ -1,181 +1,155 @@
 # CamCat
 
-CamCat 是一个可通过 Docker Compose 本地运行的多模态智能视频剪辑工作台。用户上传原片、用文本或参考图描述发布目标，CamCat 从用户原片和有授权的素材库中选片，通过 LangGraph 生成可审计的剪辑计划，最后使用真实 FFmpeg 生成含字幕的可播放视频。
+> 把一句剪辑想法，慢慢变成一条可以播放的视频。🎬
 
-本仓库不在生产、集成或 E2E 链路中使用随机向量、假模型响应或静态成功数据。缺少必需凭据时会明确失败，不会悄悄降级成 mock provider。
+CamCat 是我的个人视频实验室。上传几段原片，写一句想要的效果，它会分析镜头、寻找合适素材、列出剪辑计划、生成字幕，再交给 FFmpeg 渲染成片。
 
-## 产品界面
+如果你也对多模态检索、Agent 工作流或自动剪辑感兴趣，欢迎把它跑起来看看，欢迎带着新点子一起来玩～
 
-生产前端保留 `nova-front` 的布局、间距、颜色、字体与交互模型，只替换为 CamCat 品牌并接入真实 API。以下设计渲染图作为界面验收基准，保留在仓库中便于开源贡献者对照。
+## CamCat 会做这些事
 
-视频编辑主页保持原有三栏工作区；最左侧四个图标分别进入项目列表、媒体处理、编辑计划和导出渲染。三个辅助页面与项目列表使用统一内容宽度，宽屏下靠左显示并在右侧自然留黑，避免拉伸设计稿。
+- 建项目、上传原片，并在「媒体处理」页查看真实的处理任务和进度；
+- 用文字或参考图描述剪辑目标，检索有来源和许可证记录的素材库内容；
+- 生成可查看的剪辑计划、证据、节点轨迹、字幕和版本记录；
+- 在时间线上排序、裁短、拆分片段，或回滚到前一个版本；
+- 调用 FFmpeg 生成带字幕的视频，并在浏览器中播放、复制链接或下载；
+- 连接阿里云百炼托管模型，让本机专心运行应用和媒体服务。
 
-### 1. 项目列表
+用户原片走四小时临时处理通道；授权素材库则保存来源 URL、许可信息和 Milvus 索引。两条通道各司其职。
 
-![CamCat 项目列表设计](nova-front/20260511-234758.png)
+## 界面预览
 
-项目、剪辑会话、版本号和片段数都来自 PostgreSQL。可创建项目、展开会话、恢复剪辑或软删除会话，不再展示静态样例卡片。
+视频编辑主页保持三栏工作区。左侧四个图标会切换到项目列表、媒体处理、编辑计划和导出渲染；顶部和左侧导航始终保留，方便在同一项目里往返。
 
-### 2. 媒体处理
+### 项目列表
 
-![CamCat 媒体处理设计](nova-front/20260511-234812.png)
+![CamCat 项目列表设计](nova界面设计/nova_subpage_1_project_workspace_list_16x9.png)
 
-上传后进入独立处理页，展示真实 Job ID、队列状态、重试次数、进度、媒体数和镜头数。原片仅保留四小时，只做 FFprobe、场景切分、ASR、缩略图、质量与镜头分析；不创建长期 `Asset`/`Segment`，不写入 Milvus。
+项目卡片、会话和版本信息来自本地数据库。创建项目、展开会话、回到上次剪辑，都可以从这里开始。
 
-### 3. 编辑计划
+### 媒体处理
 
-![CamCat 编辑计划设计](nova-front/20260511-234806.png)
+![CamCat 媒体处理设计](nova界面设计/nova_subpage_2_media_processing_status_16x9.png)
 
-工作区中的 Evidence、State、Trace、Artifacts、字幕、Audit Log 和多轨时间线均使用后端数据。片段支持拖拽排序、裁短和中点拆分；所有变更通过 `base_version` 和 RFC 6902 风格 State Patch 持久化。
+上传后，Job 会一路汇报队列状态、重试次数、进度、媒体数和镜头数。FFprobe、场景切分、ASR、缩略图和质量分析的进展都集中在这一页。
 
-### 4. 导出渲染
+### 编辑计划
 
-![CamCat 导出渲染设计](nova-front/20260511-234809.png)
+![CamCat 编辑计划设计](nova界面设计/nova_subpage_4_editing_plan_16x9.png)
 
-渲染页跟踪真实 Worker 进度，展示状态版本、画幅、时长、字幕产物和 FFprobe 结果。成功后可直接播放、复制短时签名链接，或使用带 `Content-Disposition: attachment` 的专用 URL 下载。
+这里汇集 Evidence、State、Trace、字幕、Audit Log 和多轨时间线。每次片段调整都会变成带版本号的 State Patch，刷新、比较和回滚都有迹可循。
 
-## 完整工作流
+### 导出渲染
 
-```text
-用户原片（4 小时临时）  授权素材库（长期）
-        │                         │
-        ├─ 镜头/质量/ASR         ├─ Qwen3-VL 视频 embedding
-        │                         └─ Milvus dense + BM25 + scalar
-        └───────────────────────────┐
-                                  │
-                  LangGraph 理解/规划/检索/剪辑/字幕
-                                  │
-                  State Patch + 乐观锁 + Audit Log
-                                  │
-                         FFmpeg 渲染 + MinIO
-```
+![CamCat 导出渲染设计](nova界面设计/nova_subpage_5_export_render_status_16x9.png)
 
-### 主要能力
+渲染页显示 Worker 的真实状态、画幅、时长、字幕产物和 FFprobe 信息。完成后可以直接播放，或下载生成的文件。
 
-- Qwen3-VL-Embedding-8B 使用 2048 维 MRL 输出；文本、图片和原视频进入同一多模态语义空间。
-- 视频通过唯一 multipart `/v1/embeddings` 合同上传；不抽三帧、不平均多个向量、不用 caption-only 替代视觉 embedding。
-- Milvus HNSW 稠密召回、原生 BM25 稀疏召回和标签/事件/风险结构化召回并行执行，保留每路分数与排名证据。
-- 加权 RRF 与确定性业务打分后，使用 Qwen3-VL-Reranker 对有界候选集执行真实多模态重排。
-- LangGraph 拆分需求理解、查询规划、素材检索、剪辑计划、字幕、验证和持久化节点，通过 SSE 推送进度，并保留轮询恢复。
-- PostgreSQL 保存项目、剪辑会话、Graph Run、节点 Trace、版本、Patch、Job 和审计事件。
-- `base_version` Compare-and-Swap 乐观锁、HTTP 409 冲突元数据和补偿式回滚，不覆盖新版本。
-- Worker 使用真实 FFmpeg/ffprobe 完成五种画幅、基础调色、字幕边距和 -14 LUFS 规范化。
-- PostgreSQL Job 具备 lease、heartbeat、超时重领、重试/退避、取消、dead-letter 和 checkpoint。
-- MinIO lifecycle 是临时对象删除的真相源；本地 `runtime/jobs` 在 `finally` 中删除，数据库在精确四小时边界脱敏。
+## 五分钟跑起来
 
-## 所需 API 与部署答案
+### 准备清单
 
-### 需要自己部署模型吗？
+- Docker Desktop（或 Docker Engine + Compose v2）；
+- 一个可用的阿里云百炼工作空间和新的 API Key；
+- 一个百炼能够访问的 HTTPS 对象存储地址，用于视频理解和视频 embedding；
+- 可选的 `PIXABAY_API_KEY`，用于按关键词导入 Pixabay 授权视频。
 
-不需要。默认开源配置直接调用阿里云百炼托管 API，本地不需要 GPU、vLLM 或模型权重。Compose 中的 `provider-gateway` 只是轻量适配器：它把 CamCat 稳定的 provider 合同转换成百炼接口，不运行模型。
+### 配置百炼
 
-### API 清单
-
-| 配置 | 是否必需 | 用途 |
-| --- | --- | --- |
-| `CAMCAT_BAILIAN_API_HOST` | 必需 | 百炼工作空间根地址，如 `https://<workspace>.cn-beijing.maas.aliyuncs.com` |
-| `CAMCAT_BAILIAN_API_KEY` | 必需 | 调用 Qwen embedding、reranker、VL 理解和 ASR |
-| `CAMCAT_PROVIDER_GATEWAY_API_KEY` | 本地单用户可选；多用户必需 | Compose 内 API/Worker 访问适配器的共享密钥，不是百炼 key。省略时仅本地单用户栈使用受限的内部默认值 |
-| `CAMCAT_OBJECT_STORE_PUBLIC_ENDPOINT` | 完整视频链路必需 | 百炼可访问的 HTTPS MinIO/S3 地址，用于短时签名视频 URL |
-| `PIXABAY_API_KEY` | 可选 | 按关键词搜索并导入 Pixabay 授权视频 |
-
-当前默认模型：
-
-- embedding：`Qwen/Qwen3-VL-Embedding-8B`，MRL 固定为 2048 维；
-- reranker：`Qwen/Qwen3-VL-Reranker-8B`；
-- 需求理解/视频结构化分析：`qwen3-vl-plus`；
-- ASR：`qwen3-asr-flash`。
-
-百炼官方文档：[Multimodal Embedding API](https://help.aliyun.com/en/model-studio/multimodal-embedding-api-reference)、[Text/Multimodal Rerank API](https://help.aliyun.com/en/model-studio/text-rerank-api)。CamCat 的精确请求与响应合同见 [docs/provider-contract.md](docs/provider-contract.md)。
-
-### 安全配置 API Key
-
-1. 复制示例，`.env` 已被 Git 忽略：
-
-   ```bash
-   cp .env.example .env
-   ```
-
-2. 在 `.env` 中填写百炼工作空间根地址。不要加 `/compatible-mode/v1` 或 `/api/v1`，适配器会根据模型选择路径。
-3. 新建一枚未曝光的百炼 API Key，写入 `CAMCAT_BAILIAN_API_KEY`。任何曾经粘贴到聊天、Issue、日志或截图中的 key 都应立即撤销并重新生成。
-4. 本地单用户开发可跳过 `CAMCAT_PROVIDER_GATEWAY_API_KEY` 及四个内部 `*_API_KEY`；它们会在仅限 Compose 私网的适配器中使用同一个本地默认值。若启用 `multi-user`，必须生成内部网关密钥：
-
-   ```bash
-   openssl rand -hex 32
-   ```
-
-   将结果写入 `CAMCAT_PROVIDER_GATEWAY_API_KEY`；其余四个内部 `*_API_KEY` 留空即可继承它。
-5. 如果要调用百炼视频 embedding/理解，将 MinIO 通过受控 HTTPS 反向代理或隧道暴露，并把公网根地址写入 `CAMCAT_OBJECT_STORE_PUBLIC_ENDPOINT`。只暴露对象端点，不要暴露 MinIO Console。
-
-请勿把 `.env`、API Key、MinIO 密码或签名 URL 提交到 Git。
-
-## 快速启动
-
-### 前置条件
-
-- Docker Desktop 或 Docker Engine + Compose v2；
-- 可用的百炼工作空间和新 API Key；
-- 完整视频 provider 验收时，需要百炼可访问的 HTTPS 对象存储地址。
-
-### 启动 Compose
+先复制一份配置样例，密钥统一住在本机的 `.env` 里：
 
 ```bash
 cp .env.example .env
-# 编辑 .env，替换所有 change-me
+```
+
+至少填写下面两项：
+
+```dotenv
+CAMCAT_BAILIAN_API_HOST=https://<你的工作空间>.cn-beijing.maas.aliyuncs.com
+CAMCAT_BAILIAN_API_KEY=<一枚新创建且仅供 CamCat 使用的 API Key>
+```
+
+`CAMCAT_BAILIAN_API_HOST` 的格式是工作空间根地址，例如 `https://<workspace>.cn-beijing.maas.aliyuncs.com`。模型对应的接口路径由 CamCat 适配器自动补齐。
+
+本地单用户运行时，`CAMCAT_PROVIDER_GATEWAY_API_KEY` 可以留空，Compose 会准备一枚内部开发密钥。多人环境可以换成自己生成的网关密钥，配置方法见 [两种运行方式](#两种运行方式)。
+
+API Key、`.env`、MinIO 密码和签名下载链接都适合留在本机；公开分享时使用新生成的专用密钥最省心。
+
+### 启动
+
+```bash
 docker compose up --build
 ```
 
-启动后：
+启动完成后可以打开：
 
-- CamCat Web：<http://localhost:5173>
-- FastAPI OpenAPI：<http://localhost:5173/docs>
-- API readiness：<http://localhost:5173/health/ready>
+- CamCat：<http://localhost:5173>
+- API 文档：<http://localhost:5173/docs>
+- API 就绪检查：<http://localhost:5173/health/ready>
 - MinIO Console：<http://localhost:9001>
 
-Compose Web 默认使用 Nginx 同源 `/api` 代理，因此 `VITE_CAMCAT_API_BASE` 保持空值。只有在 `apps/web` 外置运行 `npm run dev` 时才需要将它设为 `http://127.0.0.1:8000`。
+Compose 下 Web 使用同源 `/api` 代理，`VITE_CAMCAT_API_BASE` 保持为空即可。单独在 `apps/web` 目录运行 `npm run dev` 时，将它设成 `http://127.0.0.1:8000`。
 
-### 首次使用
+### 第一次使用
 
-1. 打开项目列表，创建一个项目。
-2. 在工作区点击 `Upload`，选择 1–20 个原片。
-3. 在媒体处理页等待任务完成，然后进入编辑计划。
-4. 输入发布目标，可选上传参考图；Agent 通过一次 Graph Run 完成理解、检索和计划，不重复跑两套检索。
-5. 审阅 Evidence、Trace、字幕、Audit Log 和时间线，必要时裁切、拆分、拖拽或回滚。
-6. 点击 `Export`，在渲染页查看进度，完成后播放或下载。
+1. 在项目列表新建一个项目。
+2. 回到编辑工作区，点击 `Upload` 选择一段或几段原片。
+3. 在媒体处理页等待任务完成。
+4. 输入剪辑目标；也可以上传一张参考图。
+5. 查看生成的素材证据、计划、字幕和时间线，按需要裁切、拆分、排序或回滚。
+6. 点击 `Export`，在导出渲染页等待完成后播放或下载。
 
-## 导入授权素材
+## 模型搭档
 
-默认导入脚本使用 Pixabay 开放视频和 Mixkit 免费音频，每个长期素材都必须保存来源 URL 和许可证。视频默认裁成不超过 20 秒。
+默认模型组合如下：
+
+| 用途 | 默认模型 |
+| --- | --- |
+| 多模态 embedding | `Qwen/Qwen3-VL-Embedding-8B`（2048 维 MRL） |
+| Rerank | `Qwen/Qwen3-VL-Reranker-8B` |
+| 需求理解与视频分析 | `qwen3-vl-plus` |
+| ASR | `qwen3-asr-flash` |
+
+文本、图片和视频会进入同一套多模态 embedding 空间。视频会按 multipart 合同直接发送给 provider；检索会结合 Milvus 向量、BM25 和标签/事件等结构化条件，再做一次有界 rerank。请求和响应细节在 [provider-contract.md](docs/provider-contract.md)。
+
+想给素材库添点内容，可以直接运行导入脚本。每条素材都会带上来源 URL 和许可证，视频会自动整理成 20 秒以内的片段。
 
 ```bash
-# 使用 Pixabay API 文档公开的真实短样片
+# 导入少量公开的 Pixabay 视频
 docker compose exec api python scripts/seed_open_library.py --count 2 --max-duration 20
 
-# 可选：使用自己的 Pixabay key 按关键词扩充
+# 可选：使用自己的 Pixabay Key 按关键词扩充
 docker compose exec -e PIXABAY_API_KEY="$PIXABAY_API_KEY" api \
   python scripts/seed_open_library.py --query "travel nature city" --count 3
 ```
 
-`PIXABAY_API_KEY` 不得由浏览器提交，长期素材 import 在 `multi-user` 模式下还需要管理员密钥。
+Pixabay 和 Mixkit 媒体沿用各自来源页面的许可证，仓库代码则使用 MIT 许可证。
 
-## 安全模式
+## 两种运行方式
 
-- `local-single-user`：默认开源演示模式。服务器忽略浏览器伪造的 `X-User-Id`，所有数据绑定到 `CAMCAT_LOCAL_USER_ID`。
-- `multi-user`：只信任经过身份验证的反向代理头，必须配置 `CAMCAT_TRUSTED_PROXY_SECRET` 和 `CAMCAT_LIBRARY_ADMIN_KEY`。生产部署还应使用 TLS、私有网络、独立数据库凭据和集中密钥管理。
+`local-single-user` 是默认选择，适合在自己的电脑上体验。所有数据统一归到 `CAMCAT_LOCAL_USER_ID`，开箱即可使用。
 
-`multi-user` 还必须配置非默认的 `CAMCAT_PROVIDER_GATEWAY_API_KEY`。默认 gateway 端口只绑定到 `127.0.0.1`；不要把它暴露到公网。
+`multi-user` 适合继续扩展成共享服务。配置可信反向代理、`CAMCAT_TRUSTED_PROXY_SECRET`、`CAMCAT_LIBRARY_ADMIN_KEY` 和专用的 `CAMCAT_PROVIDER_GATEWAY_API_KEY`，再搭配 TLS、私有网络和独立数据库凭据即可。
 
-`camcat_segments_v7` 是当前 Milvus collection。它与旧 collection 不兼容时会新建索引而不删除旧数据；若要保留既有素材，请用新的 v7 collection 重新执行授权素材摄取。
+上传入口会检查 MIME、文件大小、用户配额和 ffprobe 信息。Nginx 提供 CSP、基础安全响应头、请求体控制、限流与同源 API 代理。更多部署细节都放在 [docs](docs) 中。
 
-Nginx 已配置 CSP、`nosniff`、Referrer Policy、Permissions Policy、请求体上限、API 限流和同源代理。上传还会执行 MIME、文件大小、用户配额和 ffprobe 校验。
+### 百炼连接小贴士
 
-### 百炼连接错误
+让 gateway 顺利找到百炼工作空间，只需要确认三件事：
 
-若 UI 显示 `Bailian transport failure: ConnectError` 或 502，通常表示 gateway 到百炼工作空间的 DNS/网络连接失败，而非剪辑本身失败。确认 `CAMCAT_BAILIAN_API_HOST` 是工作空间根地址（不要附加 `/compatible-mode/v1` 或 `/api/v1`）、API Key 已轮换且有效，然后重启 `api`、`worker` 和 `provider-gateway`。`~/.bailian/config.json` 不会自动注入 Docker Compose，仍需要在项目 `.env` 中配置这两个百炼变量。
+1. Host 使用百炼工作空间根地址；
+2. `.env` 使用当前有效的专用 Key；
+3. 更新配置后刷新三个服务：
 
-## 开发与验证
+   ```bash
+   docker compose restart api worker provider-gateway
+   ```
 
-Python 运行时固定为 3.12。
+Docker 容器从项目 `.env` 读取 Host 和 Key；Bailian CLI 的 `~/.bailian/config.json` 则继续服务于命令行工具。
+
+## 开发者角落
+
+开发环境固定为 Python 3.12：
 
 ```bash
 python3.12 -m venv .venv
@@ -183,59 +157,27 @@ python3.12 -m venv .venv
 cd apps/web && npm ci && cd ../..
 ```
 
+检查命令：
+
 ```bash
-make test                 # Ruff、Mypy、OpenAPI 合同、单元/前端测试和生产构建
-make test-integration     # 真实 PostgreSQL、Milvus、MinIO、FFmpeg 与迁移验证
-make test-external        # 真实文本/图片/视频 embedding、rerank、VL 与 ASR
-make e2e                  # Playwright 全链路浏览器旅程
+make test                 # 格式、类型、API 合同、单元/前端测试和 Web 构建
+make test-integration     # PostgreSQL、Milvus、MinIO、FFmpeg 与迁移
+make test-external        # 真实 embedding、rerank、VL 和 ASR（需要凭据）
+make e2e                  # Playwright 浏览器流程（需要测试媒体）
 ```
 
-外部 provider 测试需要 `CAMCAT_EXTERNAL_TEST_VIDEO`；Playwright 需要 `CAMCAT_E2E_VIDEO` 和 `CAMCAT_E2E_IMAGE`。缺少时测试会以明确原因 skip，不会伪造通过。
-
-### 本地浏览器验收记录
-
-当前四页已在真实 Compose 栈上逐项点击验证：项目创建/列表/恢复、原片上传与 Job 进度、编辑标签与时间线、导出进度、成片播放、复制链接和下载。完成裁短与 State Patch 后，验收样片通过真实 FFmpeg 生成 1920×1080、2.03 秒、字幕已烧录的 MP4；浏览器确认成片 `<video>` 可加载，并成功触发下载事件。
-
-这一记录只代表本地 PostgreSQL/MinIO/Worker/FFmpeg 链路；未使用有效、未曝光的百炼 key 时，不声明外部模型合同或完整 Agent E2E 通过。
-
-## MVP 能力边界
-
-下列能力已经接入真实媒体链路，但当前仍是可用 MVP，README 不将它们夸大为专业 NLE 完整实现：
-
-- 镜头去重是 JPEG SHA-256，尚非感知哈希；
-- 质量信号主要来自 `blurdetect`，分析失败时使用保守默认值；
-- 转场为单片段淡入淡出，尚非 clip-to-clip `xfade`；
-- 背景音乐使用固定音量 `amix`，尚无 sidechain ducking；
-- SFX 只使用首条并在 650ms 播放一次；
-- ASR 有时间戳时字幕严格对齐，无时间戳时由 LLM 生成；
-- 安全区当前主要是固定字幕边距；
-- 时间线支持排序、裁短和拆分，但尚不是帧级多轨专业编辑器。
-
-## 仓库结构
+为 `make test-external` 配置 `CAMCAT_EXTERNAL_TEST_VIDEO`；为 `make e2e` 配置 `CAMCAT_E2E_VIDEO` 和 `CAMCAT_E2E_IMAGE`，就能跑完整的媒体与浏览器旅程。
 
 ```text
 apps/api/          FastAPI、LangGraph、Worker、FFmpeg 和 provider gateway
-apps/web/          React/Vite/TypeScript、Nova 衍生的 CamCat 前端
-packages/contracts OpenAPI 生成/共享合同
-tests/integration/ PostgreSQL、Milvus、MinIO、Provider、FFmpeg 集成验证
-tests/e2e/         全链路浏览器旅程
-infra/             Compose 配置与启动资源
-docs/              架构、Provider 合同、运维和素材授权
+apps/web/          React/Vite/TypeScript 前端
+packages/contracts OpenAPI 生成/共享类型
+tests/integration/ 外部服务与媒体链路检查
+tests/e2e/         浏览器流程
+infra/             Compose 与启动配置
+docs/              架构、协议、运维和素材许可记录
 ```
 
-关键入口：
+[AGENTS.md](AGENTS.md) 写好了工程约定和 [docs/architecture.md](docs/architecture.md) 的数据流～
 
-- `apps/api/camcat/api.py`：FastAPI 合同、错误包装和产品 API；
-- `apps/api/camcat/worker.py`：临时原片分析、长期素材摄取和成片渲染；
-- `apps/api/camcat/agent/graph.py`：LangGraph 多节点剪辑流程；
-- `apps/api/camcat/retrieval/`：Milvus 多路召回、融合、业务打分与重排；
-- `apps/api/camcat/domain/state_patch.py`：Patch 校验、乐观锁和回滚；
-- `apps/web/CamCatApp.tsx`：项目列表与页面路由；
-- `apps/web/CamCatWorkspacePage.tsx`：媒体处理、编辑计划和导出渲染；
-- `apps/web/e2e/camcat.spec.ts`：真实浏览器 E2E。
-
-详细工程合同与验收门槛见 [AGENTS.md](AGENTS.md)；整体数据流见 [docs/architecture.md](docs/architecture.md)。
-
-## 开源许可
-
-代码使用 [MIT License](LICENSE)。通过 Pixabay/Mixkit 导入的媒体仍遵循各自来源页和许可证，不因仓库的 MIT 许可而改变。记录见 [docs/media-licenses.json](docs/media-licenses.json) 和 [docs/open-audio-library.json](docs/open-audio-library.json)。
+导入媒体的来源与许可记录在 [docs/media-licenses.json](docs/media-licenses.json) 和 [docs/open-audio-library.json](docs/open-audio-library.json)。
