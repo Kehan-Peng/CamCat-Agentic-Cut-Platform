@@ -17,31 +17,23 @@ CamCat 是我的个人视频实验室。上传几段原片，写一句想要的�
 
 用户原片走四小时临时处理通道；授权素材库则保存来源 URL、许可信息和 Milvus 索引。两条通道各司其职。
 
-## 界面预览
+## 四个页面
 
 视频编辑主页保持三栏工作区。左侧四个图标会切换到项目列表、媒体处理、编辑计划和导出渲染；顶部和左侧导航始终保留，方便在同一项目里往返。
 
 ### 项目列表
 
-![CamCat 项目列表设计](nova界面设计/nova_subpage_1_project_workspace_list_16x9.png)
-
 项目卡片、会话和版本信息来自本地数据库。创建项目、展开会话、回到上次剪辑，都可以从这里开始。
 
 ### 媒体处理
-
-![CamCat 媒体处理设计](nova界面设计/nova_subpage_2_media_processing_status_16x9.png)
 
 上传后，Job 会一路汇报队列状态、重试次数、进度、媒体数和镜头数。FFprobe、场景切分、ASR、缩略图和质量分析的进展都集中在这一页。
 
 ### 编辑计划
 
-![CamCat 编辑计划设计](nova界面设计/nova_subpage_4_editing_plan_16x9.png)
-
 这里汇集 Evidence、State、Trace、字幕、Audit Log 和多轨时间线。每次片段调整都会变成带版本号的 State Patch，刷新、比较和回滚都有迹可循。
 
 ### 导出渲染
-
-![CamCat 导出渲染设计](nova界面设计/nova_subpage_5_export_render_status_16x9.png)
 
 渲染页显示 Worker 的真实状态、画幅、时长、字幕产物和 FFprobe 信息。完成后可以直接播放，或下载生成的文件。
 
