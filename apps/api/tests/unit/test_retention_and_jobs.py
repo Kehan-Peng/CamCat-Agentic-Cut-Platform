@@ -7,8 +7,10 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 from camcat.models import JobKind, JobStatus
+from camcat.rendering.fingerprint import MediaFingerprintError
+from camcat.rendering.verification import OutputVerificationError
 from camcat.repositories import JobRepository, redact_transient_document, sanitize_job_error
-from camcat.worker import Worker
+from camcat.worker import FailureCategory, Worker, _failure_category
 
 
 def test_transient_redaction_removes_keys_transcripts_and_analysis() -> None:
@@ -100,3 +102,75 @@ def test_pending_dead_letter_query_is_limited_to_ingestion_jobs() -> None:
     pending = JobRepository(db).pending_ingest_compensations()
 
     assert pending == [job]
+
+
+def test_deterministic_failure_is_terminal_without_automatic_retry() -> None:
+    job = SimpleNamespace(
+        status=JobStatus.RUNNING,
+        attempts=1,
+        max_attempts=3,
+        worker_id="worker",
+        lease_expires_at=datetime.now(UTC),
+        cancel_requested_at=None,
+        finished_at=None,
+        error=None,
+        checkpoint={},
+    )
+    db = Mock()
+
+    JobRepository(db).fail(
+        job,
+        "compiled timeline is invalid",
+        retryable=False,
+        category=FailureCategory.DETERMINISTIC_VALIDATION.value,
+    )
+
+    assert job.status == JobStatus.FAILED
+    assert job.finished_at is not None
+    assert job.worker_id is None
+    assert job.checkpoint["failure_category"] == "deterministic_validation_failure"
+    db.commit.assert_called_once_with()
+
+
+def test_render_failure_categories_control_retry_semantics() -> None:
+    assert _failure_category(MediaFingerprintError("changed")) == FailureCategory.ARTIFACT_DRIFT
+    assert _failure_category(OutputVerificationError("bad frames")) == (
+        FailureCategory.OUTPUT_VERIFICATION
+    )
+    assert _failure_category(ConnectionError("object store unavailable")) == (
+        FailureCategory.RETRYABLE_INFRASTRUCTURE
+    )
+
+
+def test_render_source_download_is_published_atomically(tmp_path: Path) -> None:
+    worker = object.__new__(Worker)
+    worker.object_store = Mock()
+
+    def write_download(_storage_key: str, destination: Path) -> None:
+        destination.write_bytes(b"complete-media")
+
+    worker.object_store.download_file.side_effect = write_download
+    target = tmp_path / "source.mp4"
+
+    worker._download_render_source("temporary/source.mp4", target)
+
+    assert target.read_bytes() == b"complete-media"
+    assert not (tmp_path / "source.mp4.download").exists()
+
+
+def test_failed_render_source_download_removes_partial_file(tmp_path: Path) -> None:
+    worker = object.__new__(Worker)
+    worker.object_store = Mock()
+
+    def fail_download(_storage_key: str, destination: Path) -> None:
+        destination.write_bytes(b"partial")
+        raise ConnectionError("object store interrupted")
+
+    worker.object_store.download_file.side_effect = fail_download
+    target = tmp_path / "source.mp4"
+
+    with suppress(ConnectionError):
+        worker._download_render_source("temporary/source.mp4", target)
+
+    assert not target.exists()
+    assert not (tmp_path / "source.mp4.download").exists()

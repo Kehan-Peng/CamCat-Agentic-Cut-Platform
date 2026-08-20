@@ -78,3 +78,42 @@ def test_retrieval_reranks_real_video_documents_in_provider_sized_batches() -> N
     assert first["video_url"].startswith("https://media.example/segments/clip-0.mp4")
     assert first["metadata"]["license_name"] == "Pixabay"
     assert first["metadata"]["semantic_metadata"] == {"scene": "shore"}
+
+
+def test_small_results_do_not_rerank_every_recalled_video():
+    class LargeStore(FakeStore):
+        def dense_search(self, vector, **kwargs):
+            sample = super().dense_search(vector, **kwargs)[0]
+            return [
+                MilvusHit(segment_id=f"segment-{i}", score=1.0, entity=sample.entity)
+                for i in range(50)
+            ]
+
+    reranker = RecordingReranker()
+    service = RetrievalService(
+        store=LargeStore(), embedding=FakeEmbedding(), reranker=reranker, media_signer=FakeSigner()
+    )
+    result = service.search(query_text="travel", query_image_base64=None, filters={}, top_k=4)
+    assert len(result) == 4
+    assert sum(map(len, reranker.document_batches)) == 8
+
+
+def test_reranker_batches_run_concurrently_and_preserve_score_alignment():
+    from threading import Barrier
+
+    barrier = Barrier(2)
+
+    class ConcurrentReranker:
+        def rerank(self, query, documents):
+            barrier.wait(timeout=2)
+            return [float(item["text"].split()[-1]) for item in documents]
+
+    service = RetrievalService(
+        store=FakeStore(),
+        embedding=FakeEmbedding(),
+        reranker=ConcurrentReranker(),
+        media_signer=FakeSigner(),
+    )
+    results = service.search(query_text="travel", query_image_base64=None, filters={}, top_k=5)
+    assert results[0].segment_id == "segment-4"
+    assert results[0].reranker_score == 4

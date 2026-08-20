@@ -1,3 +1,4 @@
+import math
 from copy import deepcopy
 
 import pytest
@@ -7,6 +8,31 @@ from camcat.domain.state_patch import (
     apply_versioned_patch,
     build_rollback_patch,
 )
+
+
+@pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
+def test_nonfinite_clip_times_never_persist(value):
+    state = VersionedState("s", 1, {"clips": [], "subtitles": []})
+    with pytest.raises(ValueError):
+        apply_versioned_patch(
+            state,
+            base_version=1,
+            actor="agent",
+            reason="invalid",
+            operations=[
+                {
+                    "op": "replace",
+                    "path": "/clips",
+                    "value": [
+                        {
+                            "clip_id": "invalid",
+                            "source_start": 0,
+                            "source_end": value,
+                        }
+                    ],
+                }
+            ],
+        )
 
 
 def initial_state() -> VersionedState:
@@ -20,8 +46,6 @@ def initial_state() -> VersionedState:
                     "clip_id": "clip-1",
                     "source_start": 0.0,
                     "source_end": 5.0,
-                    "output_start": 0.0,
-                    "output_end": 5.0,
                 }
             ],
             "subtitles": [],
@@ -61,7 +85,7 @@ def test_audio_plan_is_an_explicit_patchable_domain_root() -> None:
                 "op": "replace",
                 "path": "/audio_plan",
                 "value": {
-                    "bgm": [{"storage_key": "library/audio/bgm.mp3"}],
+                    "bgm": [{"cue_id": "bgm-1", "storage_key": "library/audio/bgm.mp3"}],
                     "ambient": [],
                     "sound_effects": [],
                 },
@@ -86,6 +110,52 @@ def test_stale_base_version_raises_structured_conflict() -> None:
 
     assert caught.value.expected_version == 2
     assert caught.value.current_version == 3
+
+
+def test_duplicate_stable_clip_ids_are_rejected() -> None:
+    before = initial_state()
+    duplicate = deepcopy(before.document["clips"][0])
+    with pytest.raises(ValueError, match="clip_id"):
+        apply_versioned_patch(
+            before,
+            base_version=3,
+            operations=[{"op": "add", "path": "/clips/-", "value": duplicate}],
+            actor="agent",
+            reason="duplicate stable id",
+        )
+
+
+def test_physical_output_offsets_are_rejected_from_semantic_state() -> None:
+    before = initial_state()
+    clip = {**before.document["clips"][0], "output_start": 0, "output_end": 5}
+    with pytest.raises(ValueError, match="physical output"):
+        apply_versioned_patch(
+            before,
+            base_version=3,
+            operations=[{"op": "replace", "path": "/clips", "value": [clip]}],
+            actor="agent",
+            reason="reject physical state",
+        )
+
+
+@pytest.mark.parametrize(
+    "field,value,message",
+    [
+        ("transition", {"type": "dissolve", "duration_frames": 9}, "transition"),
+        ("speed", 0, "speed"),
+    ],
+)
+def test_clip_state_rejects_physical_transition_and_invalid_speed(field, value, message) -> None:
+    before = initial_state()
+    clip = {**before.document["clips"][0], field: value}
+    with pytest.raises(ValueError, match=message):
+        apply_versioned_patch(
+            before,
+            base_version=3,
+            operations=[{"op": "replace", "path": "/clips", "value": [clip]}],
+            actor="agent",
+            reason="invalid semantic clip",
+        )
 
 
 @pytest.mark.parametrize("path", ["/version", "/session_id", "/clips/0/unknown"])

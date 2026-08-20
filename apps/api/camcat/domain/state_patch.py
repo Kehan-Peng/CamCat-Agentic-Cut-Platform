@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+from math import isfinite
 from typing import Any
 from uuid import uuid4
 
@@ -56,6 +57,7 @@ _ROOTS = {
     "title",
     "target_duration",
     "audio_plan",
+    "speech_edit",
 }
 _CLIP_FIELDS = {
     "clip_id",
@@ -63,12 +65,19 @@ _CLIP_FIELDS = {
     "segment_id",
     "source_start",
     "source_end",
-    "output_start",
-    "output_end",
     "transition",
     "reason",
 }
-_SUBTITLE_FIELDS = {"subtitle_id", "text", "start", "end", "style"}
+_SUBTITLE_FIELDS = {
+    "subtitle_id",
+    "text",
+    "clip_id",
+    "source_id",
+    "source_start",
+    "source_end",
+    "projection_policy",
+    "style",
+}
 
 
 def apply_versioned_patch(
@@ -195,29 +204,67 @@ def _validate_document(document: JsonObject) -> None:
     clips = document.get("clips", [])
     if not isinstance(clips, list):
         raise ValueError("clips must be a list")
-    last_output_end = 0.0
-    for clip in clips:
+    clip_ids = [str(item.get("clip_id", "")) for item in clips if isinstance(item, dict)]
+    if len(clip_ids) != len(clips) or any(not item for item in clip_ids):
+        raise ValueError("each clip requires a stable clip_id")
+    if len(clip_ids) != len(set(clip_ids)):
+        raise ValueError("clip_id must be unique within an editing state")
+    for index, clip in enumerate(clips):
         if not isinstance(clip, dict):
             raise ValueError("each clip must be an object")
         source_start = float(clip.get("source_start", 0))
         source_end = float(clip.get("source_end", 0))
-        output_start = float(clip.get("output_start", 0))
-        output_end = float(clip.get("output_end", 0))
-        if min(source_start, output_start) < 0 or source_end <= source_start:
+        if "output_start" in clip or "output_end" in clip:
+            raise ValueError(
+                "physical output timecodes must not be stored in semantic editing state"
+            )
+        if not all(isfinite(value) for value in (source_start, source_end)):
+            raise ValueError("clip timecodes must be finite")
+        if source_start < 0 or source_end <= source_start:
             raise ValueError("clip timecodes are invalid")
-        if output_end <= output_start or output_start < last_output_end:
-            raise ValueError("output timeline must be ordered with positive durations")
-        last_output_end = output_end
-    for subtitle in document.get("subtitles", []):
-        if float(subtitle.get("start", 0)) < 0 or float(subtitle.get("end", 0)) <= float(
-            subtitle.get("start", 0)
-        ):
+        speed = float(clip.get("speed", 1))
+        if not isfinite(speed) or not 0.1 <= speed <= 8:
+            raise ValueError("clip speed is invalid")
+        transition = clip.get("transition", "cut")
+        if not isinstance(transition, str) or transition not in {"cut", "dissolve"}:
+            raise ValueError("clip transition must be semantic cut or dissolve intent")
+        if index == len(clips) - 1 and transition != "cut":
+            raise ValueError("final clip cannot have an outgoing transition")
+    subtitles = document.get("subtitles", [])
+    if not isinstance(subtitles, list) or any(not isinstance(item, dict) for item in subtitles):
+        raise ValueError("subtitles must be a list of objects")
+    subtitle_ids = [str(item.get("subtitle_id", "")) for item in subtitles]
+    if any(not item for item in subtitle_ids) or len(subtitle_ids) != len(set(subtitle_ids)):
+        raise ValueError("subtitle_id must be present and unique")
+    for subtitle in subtitles:
+        source_start = float(subtitle.get("source_start", 0))
+        source_end = float(subtitle.get("source_end", 0))
+        if not subtitle.get("clip_id") or not subtitle.get("source_id"):
+            raise ValueError("subtitle must bind to a stable clip and source")
+        if source_start < 0 or source_end <= source_start:
             raise ValueError("subtitle timecodes are invalid")
+        if subtitle.get("projection_policy", "error") not in {
+            "error",
+            "snap_next",
+            "snap_previous",
+        }:
+            raise ValueError("subtitle projection policy is invalid")
     audio_plan = document.get("audio_plan", {})
     if not isinstance(audio_plan, dict) or any(
         not isinstance(audio_plan.get(key, []), list) for key in ("bgm", "ambient", "sound_effects")
     ):
         raise ValueError("audio plan must contain media lists")
+    cue_ids = [
+        str(item.get("cue_id", ""))
+        for key in ("bgm", "ambient", "sound_effects")
+        for item in audio_plan.get(key, [])
+        if isinstance(item, dict)
+    ]
+    cue_count = sum(len(audio_plan.get(key, [])) for key in ("bgm", "ambient", "sound_effects"))
+    if len(cue_ids) != cue_count:
+        raise ValueError("audio cues must be objects")
+    if cue_ids and (any(not item for item in cue_ids) or len(cue_ids) != len(set(cue_ids))):
+        raise ValueError("cue_id must be present and unique")
 
 
 def _pointer_parts(path: str) -> list[str]:

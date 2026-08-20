@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 import signal
 import time
+from enum import StrEnum
 from pathlib import Path
 from types import FrameType
 from typing import Any
@@ -13,16 +14,13 @@ from sqlalchemy import delete, select, text
 from camcat.config import get_settings
 from camcat.database import SessionLocal
 from camcat.media.ffmpeg import (
-    concat_clips,
     detect_scene_cuts,
     extract_audio,
     extract_clip,
     extract_thumbnail,
     measure_visual_quality,
-    normalize_clip,
     probe,
     shot_signature,
-    write_srt,
 )
 from camcat.media.segmentation import build_segments
 from camcat.models import (
@@ -36,6 +34,15 @@ from camcat.models import (
     StateVersion,
     utcnow,
 )
+from camcat.rendering.build import (
+    BuildVerificationError,
+    RenderBuildService,
+    verify_render_build,
+)
+from camcat.rendering.doctor import CapabilityProfile, inspect_capabilities
+from camcat.rendering.ffmpeg_renderer import FFmpegRenderer, FFmpegRenderError
+from camcat.rendering.fingerprint import MediaFingerprintError, fingerprint_media
+from camcat.rendering.verification import OutputVerificationError, verify_output
 from camcat.repositories import JobRepository, sanitize_job_error
 from camcat.retrieval.milvus_store import MilvusSegmentStore
 from camcat.services.object_store import ObjectStore
@@ -45,6 +52,9 @@ from camcat.services.providers import (
     QwenEmbeddingClient,
     QwenVisualAnalysisClient,
 )
+from camcat.timeline.compiler import TimelineCompiler
+from camcat.timeline.schemas import MediaFingerprint, RenderProfile
+from camcat.timeline.validator import TimelineValidationError, verify_compiled_timeline
 
 
 class Worker:
@@ -56,6 +66,7 @@ class Worker:
         self.visual_analysis = QwenVisualAnalysisClient(self.settings)
         self.asr = QwenAsrClient(self.settings)
         self.milvus = MilvusSegmentStore(self.settings)
+        self.capabilities: CapabilityProfile | None = None
         self.running = True
         self._last_maintenance = 0.0
 
@@ -63,6 +74,10 @@ class Worker:
         Path(self.settings.runtime_dir).mkdir(parents=True, exist_ok=True)
         self.object_store.ensure_bucket()
         self.milvus.ensure_collection()
+        self.capabilities = inspect_capabilities(
+            Path(self.settings.runtime_dir),
+            object_store_healthcheck=self.object_store.ensure_bucket,
+        )
 
     def run(self) -> None:
         self.bootstrap()
@@ -82,12 +97,29 @@ class Worker:
                 try:
                     result = self._execute_job(job, repository)
                     repository.succeed(job, result)
+                    if job.kind == JobKind.RENDER:
+                        self._remove_job_runtime(job)
                 except Exception as exc:
                     db.rollback()
                     error = sanitize_job_error(exc)
-                    repository.fail(job, error)
-                    if job.kind == JobKind.INGEST_MEDIA and job.status == JobStatus.DEAD_LETTER:
+                    category = _failure_category(exc)
+                    repository.fail(
+                        job,
+                        error,
+                        retryable=category == FailureCategory.RETRYABLE_INFRASTRUCTURE,
+                        category=category.value,
+                    )
+                    if job.kind == JobKind.INGEST_MEDIA and job.status in {
+                        JobStatus.FAILED,
+                        JobStatus.DEAD_LETTER,
+                    }:
                         self._finalize_failed_ingest(job, db, error)
+                    if job.kind == JobKind.RENDER and job.status in {
+                        JobStatus.FAILED,
+                        JobStatus.CANCELLED,
+                        JobStatus.DEAD_LETTER,
+                    }:
+                        self._remove_job_runtime(job)
 
     def _run_maintenance(self, repository: JobRepository) -> None:
         lock_key = 7_823_441_901
@@ -116,6 +148,10 @@ class Worker:
             repository.redact_expired(now=cutoff)
         finally:
             repository.db.scalar(text("SELECT pg_advisory_unlock(:key)"), {"key": lock_key})
+
+    def _remove_job_runtime(self, job: Job) -> None:
+        job_dir = Path(self.settings.runtime_dir) / "jobs" / str(job.id)
+        shutil.rmtree(job_dir, ignore_errors=True)
 
     def _finalize_failed_ingest(self, job: Job, db: Any, error: str) -> None:
         try:
@@ -181,7 +217,8 @@ class Worker:
                 return self.render(job, repository)
             raise ValueError(f"unsupported job kind: {job.kind}")
         finally:
-            shutil.rmtree(job_dir, ignore_errors=True)
+            if job.kind != JobKind.RENDER:
+                shutil.rmtree(job_dir, ignore_errors=True)
 
     def analyze_source(self, job: Job, jobs: JobRepository) -> dict[str, Any]:
         """Analyze user originals without inserting Asset/Segment or Milvus entities."""
@@ -450,8 +487,7 @@ class Worker:
         db = jobs.db
         session_id = UUID(str(job.payload["session_id"]))
         version_number = int(job.payload["version"])
-        editing_session = db.get(EditingSession, session_id)
-        if editing_session is None:
+        if db.get(EditingSession, session_id) is None:
             raise LookupError("editing session no longer exists")
         version = db.scalar(
             select(StateVersion).where(
@@ -460,19 +496,30 @@ class Worker:
         )
         if version is None:
             raise LookupError("state version no longer exists")
-
+        jobs.checkpoint(
+            job,
+            "state_loaded",
+            {"session_id": str(session_id), "state_version": version_number},
+        )
         width, height = (int(value) for value in str(job.payload["resolution"]).split("x"))
+        profile_payload = dict(job.payload.get("render_profile") or {})
+        profile = RenderProfile(width=width, height=height, **profile_payload)
         job_dir = Path(self.settings.runtime_dir) / "jobs" / str(job.id)
-        normalized: list[Path] = []
-        clips = version.document.get("clips", [])
+        source_dir = job_dir / "sources"
+        sources: dict[str, MediaFingerprint] = {}
+        document = dict(version.document)
+        clips = list(document.get("clips", []))
         for index, clip_plan in enumerate(clips):
             if clip_plan.get("origin") == "source":
                 storage_key = str(clip_plan.get("storage_key") or "")
                 if not storage_key:
                     raise LookupError("transient source clip is missing its storage reference")
-                source = job_dir / "sources" / f"{clip_plan.get('media_id', index)}.mp4"
-                if not source.exists():
-                    self.object_store.download_file(storage_key, source)
+                source_id = str(
+                    clip_plan.get("media_id")
+                    or clip_plan.get("source_id")
+                    or clip_plan.get("segment_id")
+                    or index
+                )
             else:
                 segment = db.get(Segment, UUID(str(clip_plan["segment_id"])))
                 if segment is None:
@@ -480,68 +527,128 @@ class Worker:
                 asset = db.get(Asset, segment.asset_id)
                 if asset is None:
                     raise LookupError("source asset no longer exists")
-                source = job_dir / "sources" / f"{asset.id}.mp4"
-                if not source.exists():
-                    self.object_store.download_file(asset.storage_key, source)
-            extracted = job_dir / "cuts" / f"{index:04d}.mp4"
-            extract_clip(
-                source,
-                extracted,
-                start=float(clip_plan["source_start"]),
-                end=float(clip_plan["source_end"]),
+                storage_key = asset.storage_key
+                source_id = str(clip_plan.get("segment_id"))
+            source = source_dir / f"{_safe_runtime_name(source_id)}.media"
+            if not source.exists():
+                self._download_render_source(storage_key, source)
+            sources[source_id] = fingerprint_media(
+                source, media_id=source_id, storage_key=storage_key
             )
-            target = job_dir / "normalized" / f"{index:04d}.mp4"
-            normalize_clip(extracted, target, width=width, height=height)
-            normalized.append(target)
-            jobs.update_progress(job, 0.1 + 0.55 * ((index + 1) / max(1, len(clips))))
+            jobs.update_progress(job, 0.08 + 0.17 * ((index + 1) / max(1, len(clips))))
 
-        subtitles_path: Path | None = None
-        if job.payload.get("burn_subtitles") and version.document.get("subtitles"):
-            subtitles_path = job_dir / "subtitles.srt"
-            write_srt(version.document["subtitles"], subtitles_path)
+        audio_plan = document.get("audio_plan", {})
+        if isinstance(audio_plan, dict):
+            for state_key in ("bgm", "ambient", "sound_effects"):
+                for item in audio_plan.get(state_key, []):
+                    storage_key = str(item.get("storage_key") or "")
+                    if not storage_key:
+                        raise LookupError(f"audio cue {state_key} is missing its storage reference")
+                    source_id = str(item.get("media_id") or item.get("source_id") or storage_key)
+                    source = source_dir / f"{_safe_runtime_name(source_id)}.audio"
+                    if not source.exists():
+                        self._download_render_source(storage_key, source)
+                    sources[source_id] = fingerprint_media(
+                        source, media_id=source_id, storage_key=storage_key
+                    )
+        jobs.checkpoint(job, "sources_fingerprinted", {"source_count": len(sources)})
+
+        timeline = TimelineCompiler(profile).compile(
+            session_id=session_id,
+            state_version=version_number,
+            document=document,
+            sources=sources,
+        )
+        jobs.checkpoint(
+            job,
+            "timeline_compiled",
+            {"compiled_hash": timeline.compiled_hash, "frame_count": timeline.frame_count},
+        )
+        verify_compiled_timeline(timeline)
+        jobs.checkpoint(job, "compiled_verified")
+
+        build_root = job_dir / "build"
+        if build_root.exists():
+            build = verify_render_build(build_root)
+            if build.timeline.compiled_hash != timeline.compiled_hash:
+                raise BuildVerificationError(
+                    "existing render build belongs to different compiled input"
+                )
+        else:
+            build = RenderBuildService(renderer_version=FFmpegRenderer.VERSION).create(
+                build_root, timeline=timeline, profile=profile
+            )
+        jobs.checkpoint(job, "build_created", {"build_hash": build.manifest.build_hash})
+        build = verify_render_build(build.root)
+        jobs.checkpoint(job, "build_verified", {"build_hash": build.manifest.build_hash})
 
         output = job_dir / "camcat-render.mp4"
-        background_music: Path | None = None
-        ambient_audio: Path | None = None
-        sound_effect: Path | None = None
-        bgm_plan = version.document.get("audio_plan", {}).get("bgm", [])
-        if bgm_plan and bgm_plan[0].get("storage_key"):
-            background_music = job_dir / "audio" / "background-music.mp3"
-            self.object_store.download_file(str(bgm_plan[0]["storage_key"]), background_music)
-        ambient_plan = version.document.get("audio_plan", {}).get("ambient", [])
-        if ambient_plan and ambient_plan[0].get("storage_key"):
-            ambient_audio = job_dir / "audio" / "ambient.mp3"
-            self.object_store.download_file(str(ambient_plan[0]["storage_key"]), ambient_audio)
-        sfx_plan = version.document.get("audio_plan", {}).get("sound_effects", [])
-        if sfx_plan and sfx_plan[0].get("storage_key"):
-            sound_effect = job_dir / "audio" / "transition-sfx.mp3"
-            self.object_store.download_file(str(sfx_plan[0]["storage_key"]), sound_effect)
-        concat_clips(
-            normalized,
-            output,
-            subtitles=subtitles_path,
-            background_music=background_music,
-            ambient_audio=ambient_audio,
-            sound_effect=sound_effect,
+        jobs.checkpoint(job, "render_started")
+        FFmpegRenderer().render(build, output)
+        jobs.checkpoint(job, "encoded", {"output_bytes": output.stat().st_size})
+        verification = verify_output(build, output)
+        jobs.checkpoint(
+            job,
+            "decode_verified",
+            {
+                "expected_frames": verification.expected_frames,
+                "actual_frames": verification.actual_frames,
+                "frame_delta": verification.frame_delta,
+                "duration_delta_seconds": verification.duration_delta_seconds,
+            },
         )
-        output_metadata = probe(output)
-        jobs.update_progress(job, 0.9)
         output_key = f"renders/{session_id}/v{version_number}/{job.id}.mp4"
         self.object_store.upload_file(output, output_key, "video/mp4")
         subtitle_key = None
-        if subtitles_path is not None:
+        subtitles_path = build.root / "subtitles.srt"
+        if subtitles_path.is_file():
             subtitle_key = f"renders/{session_id}/v{version_number}/{job.id}.srt"
             self.object_store.upload_file(subtitles_path, subtitle_key, "application/x-subrip")
+        build_prefix = f"renders/{session_id}/v{version_number}/{job.id}/build"
+        build_keys: dict[str, str] = {}
+        for filename, content_type in (
+            ("compiled-timeline.json", "application/json"),
+            ("source-manifest.json", "application/json"),
+            ("render-profile.json", "application/json"),
+            ("build-manifest.json", "application/json"),
+            ("subtitles.srt", "application/x-subrip"),
+        ):
+            if not (build.root / filename).is_file():
+                continue
+            key = f"{build_prefix}/{filename}"
+            self.object_store.upload_file(build.root / filename, key, content_type)
+            build_keys[filename] = key
+        jobs.checkpoint(job, "artifact_uploaded", {"output_key": output_key})
         return {
             "session_id": str(session_id),
             "state_version": version_number,
+            "state_hash": timeline.state_hash,
+            "compiled_timeline_hash": timeline.compiled_hash,
+            "render_build_hash": build.manifest.build_hash,
             "output_key": output_key,
             "subtitle_key": subtitle_key,
-            "duration_seconds": output_metadata.duration,
-            "width": output_metadata.width,
-            "height": output_metadata.height,
-            "file_size": output.stat().st_size,
+            "build_keys": build_keys,
+            "duration_seconds": verification.duration_seconds,
+            "width": verification.width,
+            "height": verification.height,
+            "file_size": verification.output_bytes,
+            "output_sha256": verification.output_sha256,
+            "verification_status": verification.status.value,
+            "expected_frames": verification.expected_frames,
+            "actual_frames": verification.actual_frames,
+            "frame_delta": verification.frame_delta,
+            "duration_delta_seconds": verification.duration_delta_seconds,
+            "full_decode_succeeds": verification.full_decode_succeeds,
         }
+
+    def _download_render_source(self, storage_key: str, target: Path) -> None:
+        temporary = target.with_name(f"{target.name}.download")
+        temporary.unlink(missing_ok=True)
+        try:
+            self.object_store.download_file(storage_key, temporary)
+            temporary.replace(target)
+        finally:
+            temporary.unlink(missing_ok=True)
 
     def stop(self, _signum: int, _frame: FrameType | None) -> None:
         self.running = False
@@ -579,6 +686,32 @@ def _temporary_keys(value: Any) -> set[str]:
         for child in value:
             keys.update(_temporary_keys(child))
     return keys
+
+
+def _safe_runtime_name(value: str) -> str:
+    return uuid5(NAMESPACE_URL, value).hex
+
+
+class FailureCategory(StrEnum):
+    RETRYABLE_INFRASTRUCTURE = "retryable_infrastructure_failure"
+    DETERMINISTIC_VALIDATION = "deterministic_validation_failure"
+    UNSUPPORTED_FEATURE = "unsupported_feature"
+    ARTIFACT_DRIFT = "artifact_drift"
+    OUTPUT_VERIFICATION = "output_verification_failure"
+
+
+def _failure_category(error: Exception) -> FailureCategory:
+    if isinstance(error, MediaFingerprintError):
+        return FailureCategory.ARTIFACT_DRIFT
+    if isinstance(error, OutputVerificationError):
+        return FailureCategory.OUTPUT_VERIFICATION
+    if isinstance(error, FFmpegRenderError):
+        return FailureCategory.UNSUPPORTED_FEATURE
+    if isinstance(
+        error, (BuildVerificationError, TimelineValidationError, LookupError, ValueError)
+    ):
+        return FailureCategory.DETERMINISTIC_VALIDATION
+    return FailureCategory.RETRYABLE_INFRASTRUCTURE
 
 
 def main() -> None:
