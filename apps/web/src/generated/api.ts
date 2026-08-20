@@ -139,6 +139,7 @@ export type RenderRequest = {
   "base_version": number;
   "resolution"?: "1080x1920" | "1920x1080" | "1080x1080" | "1080x1440" | "1440x1080" | null;
   "burn_subtitles"?: boolean;
+  "fps"?: 24 | 25 | 30 | 50 | 60;
 };
 
 export type RollbackRequest = {

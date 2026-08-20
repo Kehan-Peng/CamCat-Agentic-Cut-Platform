@@ -19,8 +19,9 @@ from sqlalchemy.orm import Session
 
 from camcat.agent.graph import CamCatGraph, CamCatState
 from camcat.agent.scope import editing_retrieval_filters
+from camcat.agent.streaming import background_stream
 from camcat.config import Settings, get_settings
-from camcat.database import get_db
+from camcat.database import SessionLocal, get_db
 from camcat.domain.state_patch import PatchConflict
 from camcat.editing.policies import choose_aspect_ratio, expiry_for_upload, resolution_for_ratio
 from camcat.media.ffmpeg import MediaCommandError, probe
@@ -697,7 +698,7 @@ def replay_graph_run_events(
         raise HTTPException(404, "Graph Run 不存在")
 
     def replay() -> Any:
-        for index, item in enumerate(run.node_trace):
+        for index, item in enumerate(run.node_trace, start=1):
             if index > after:
                 yield _sse(
                     "node_completed",
@@ -717,7 +718,7 @@ def replay_graph_run_events(
                 "status": run.status.value,
                 "message": f"Graph Run {run.status.value}",
             },
-            event_id=len(run.node_trace),
+            event_id=len(run.node_trace) + 1,
         )
 
     return StreamingResponse(
@@ -1023,7 +1024,13 @@ def stream_editing_agent(
     db.add(run)
     db.commit()
 
-    def events() -> Any:
+    run_id = run.id
+
+    def events(db: Session) -> Any:
+        run = db.get(GraphRun, run_id)
+        session = db.get(EditingSession, session_id)
+        if run is None or session is None:
+            raise RuntimeError("剪辑上下文已不存在")
         yield _sse(
             "run_started",
             {"graph_run_id": str(run.id), "message": "已建立剪辑上下文，开始理解需求"},
@@ -1050,6 +1057,8 @@ def stream_editing_agent(
             ):
                 final_state = cast(CamCatState, state)
                 trace = list(state.get("node_trace", []))
+                run.node_trace = trace
+                db.commit()
                 for item in trace[emitted_nodes:]:
                     yield _sse(
                         "node_completed",
@@ -1095,8 +1104,21 @@ def stream_editing_agent(
                 db.commit()
             yield _sse("failed", {"graph_run_id": str(run.id), "message": public_error})
 
+    def produce() -> Any:
+        with SessionLocal() as worker_db:
+            yield from events(worker_db)
+
+    try:
+        stream = background_stream(produce)
+    except RuntimeError as exc:
+        run.status = JobStatus.FAILED
+        run.error = str(exc)
+        run.finished_at = utcnow()
+        db.commit()
+        raise HTTPException(503, str(exc)) from exc
+
     return StreamingResponse(
-        events(),
+        stream,
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -1131,6 +1153,26 @@ def render_editing_session(
             "resolution": request.resolution
             or "x".join(str(value) for value in resolution_for_ratio(configured_ratio)),
             "burn_subtitles": request.burn_subtitles,
+            "render_profile": {
+                "fps_num": request.fps,
+                "fps_den": 1,
+                "video_codec": "libx264",
+                "audio_codec": "aac",
+                "audio_sample_rate": 48000,
+                "audio_channels": 2,
+                "pixel_format": "yuv420p",
+                "crf": 20,
+                "preset": "veryfast",
+                "burn_subtitles": request.burn_subtitles,
+                "color_contrast": 1.035,
+                "color_saturation": 1.06,
+                "color_gamma": 1.01,
+                "normalize_loudness": True,
+                "loudness_target_lufs": -14,
+                "loudness_true_peak_db": -1.5,
+                "loudness_range_lu": 11,
+                "subtitle_margin_v": 48,
+            },
         },
     )
     return JobResponse(

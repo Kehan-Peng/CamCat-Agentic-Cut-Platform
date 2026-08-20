@@ -49,10 +49,10 @@ def test_timeline_always_keeps_user_source_primary_and_caps_library_at_25_percen
     result = enforce_timeline_policy(proposed, external_ratio_limit=0.25)
 
     source_duration = sum(
-        item["output_end"] - item["output_start"] for item in result if item["origin"] == "source"
+        item["source_end"] - item["source_start"] for item in result if item["origin"] == "source"
     )
     library_duration = sum(
-        item["output_end"] - item["output_start"] for item in result if item["origin"] == "library"
+        item["source_end"] - item["source_start"] for item in result if item["origin"] == "library"
     )
     assert source_duration > library_duration
     assert library_duration / (source_duration + library_duration) <= 0.25 + 1e-9

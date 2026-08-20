@@ -7,6 +7,7 @@ import pytest
 from camcat.config import Settings
 from camcat.services.providers import (
     ProviderError,
+    QwenChatClient,
     QwenEmbeddingClient,
     QwenRerankerClient,
     SegmentSemantics,
@@ -38,6 +39,22 @@ def test_structured_content_accepts_json_object() -> None:
     assert parse_structured_content('{"summary":"ok"}') == {"summary": "ok"}
 
 
+def test_chat_requests_json_correction_once_before_failing():
+    config = settings().model_copy(update={"llm_model": "configured-model"})
+    client = QwenChatClient(config)
+    requests = []
+
+    def request(method, path, **kwargs):
+        requests.append(kwargs["json"])
+        content = '{"summary":' if len(requests) == 1 else '{"summary":"ok"}'
+        return {"choices": [{"message": {"content": content}}]}
+
+    client.request = request
+    assert client.json_completion(system="Return JSON", user="目标") == {"summary": "ok"}
+    assert len(requests) == 2
+    assert "valid JSON" in requests[1]["messages"][0]["content"]
+
+
 def test_structured_content_normalizes_top_level_model_array() -> None:
     assert parse_structured_content('[{"text":"第一幕","start":0,"end":1}]') == {
         "items": [{"text": "第一幕", "start": 0, "end": 1}]
@@ -46,6 +63,13 @@ def test_structured_content_normalizes_top_level_model_array() -> None:
 
 def test_structured_content_removes_markdown_json_fence() -> None:
     assert parse_structured_content('```json\n{"clips":[]}\n```') == {"clips": []}
+
+
+def test_structured_content_normalizes_only_escaped_whitespace_outside_strings():
+    assert parse_structured_content(r'{\n"summary":"line\nnext",\n"path":"C:\\new"\n}') == {
+        "summary": "line\nnext",
+        "path": "C:\\new",
+    }
 
 
 def test_embedding_contract_uploads_original_video_as_multipart(tmp_path: Path) -> None:

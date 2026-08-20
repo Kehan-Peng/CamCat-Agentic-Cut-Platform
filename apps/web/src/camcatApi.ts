@@ -192,6 +192,19 @@ export function userFacingErrorMessage(message: string): string {
   return message;
 }
 
+export class CamCatApiError extends Error {
+  readonly details: Record<string, unknown>;
+  readonly requestId?: string;
+
+  constructor(readonly status: number, payload: unknown) {
+    super(status === 409 ? "状态已更新，请刷新最新版本后重新提交。" : extractErrorDetail(payload));
+    const body = (payload ?? {}) as { error?: unknown; request_id?: string };
+    const envelope = (body.error ?? body) as { details?: Record<string, unknown>; request_id?: string };
+    this.details = envelope.details ?? {};
+    this.requestId = envelope.request_id ?? body.request_id;
+  }
+}
+
 export function createCamCatApiClient({ baseUrl, userId, fetchImpl = fetch }: ClientOptions) {
   const normalizedBaseUrl = baseUrl.replace(/\/+$/, "");
 
@@ -203,7 +216,7 @@ export function createCamCatApiClient({ baseUrl, userId, fetchImpl = fetch }: Cl
     });
     const payload = await readJson(response);
     if (!response.ok) {
-      throw new Error(`${options.method} ${path} failed: ${extractErrorDetail(payload)}`);
+      throw new CamCatApiError(response.status, payload);
     }
     return payload as T;
   }
@@ -385,7 +398,7 @@ export function createCamCatApiClient({ baseUrl, userId, fetchImpl = fetch }: Cl
       });
       if (!response.ok) {
         const payload = await readJson(response);
-        throw new Error(`POST ${path} failed: ${extractErrorDetail(payload)}`);
+        throw new CamCatApiError(response.status, payload);
       }
       if (!response.body) throw new Error("Agent 进度流不可用");
       let completed: EditingSessionResponse | undefined;
@@ -480,8 +493,19 @@ export async function waitForJob(
 ) {
   const intervalMs = options.intervalMs ?? 1000;
   const deadline = Date.now() + (options.timeoutMs ?? 20 * 60 * 1000);
+  let consecutiveErrors = 0;
   while (Date.now() < deadline) {
-    const job = await getJob(jobId);
+    let job: JobResponse;
+    try {
+      job = await getJob(jobId);
+      consecutiveErrors = 0;
+    } catch (error) {
+      const transient = error instanceof TypeError ||
+        (error instanceof CamCatApiError && [429, 502, 503, 504].includes(error.status));
+      if (!transient || ++consecutiveErrors >= 3) throw error;
+      await new Promise((resolve) => setTimeout(resolve, intervalMs * consecutiveErrors));
+      continue;
+    }
     options.onProgress?.(job);
     if (job.status === "succeeded") return job;
     if (job.status === "failed" || job.status === "cancelled" || job.status === "dead_letter") {
@@ -508,6 +532,7 @@ export async function runSearchAndPlan(
     queryImageBase64?: string;
     topK?: number;
     onAgentEvent?: (event: AgentProgressEvent) => void;
+    onSessionCreated?: (session: EditingSessionResponse) => void;
   },
 ) {
   const sourceVideoId = options.uploadedVideoId;
@@ -518,6 +543,7 @@ export async function runSearchAndPlan(
   const session =
     options.currentSession ??
     (await api.createEditingSession(sourceVideoId, options.query, options.sourceJobId, options.projectId));
+  if (!options.currentSession) options.onSessionCreated?.(session);
   const completed = await api.runEditingAgentStream(
     session.editing_session_id,
     session.state_version,

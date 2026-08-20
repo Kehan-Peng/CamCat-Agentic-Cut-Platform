@@ -112,6 +112,7 @@ type WorkspaceController = {
   handleRender: () => Promise<void>;
   handleQueryImage: (file: File) => Promise<void>;
   handleRollback: () => Promise<void>;
+  handleRefreshSession: () => Promise<void>;
   handleReorderClip: (sourceId: string, targetId: string) => Promise<void>;
   handleTrimClip: (clipId: string) => Promise<void>;
   handleSplitClip: (clipId: string) => Promise<void>;
@@ -151,7 +152,15 @@ function useWorkspaceController({ project, initialSession, initialPage = "editin
   const apiBase = env.VITE_CAMCAT_API_BASE || "";
   const userId = env.VITE_CAMCAT_USER_ID ?? "camcat-local-user";
   const api = useMemo(() => createCamCatApiClient({ baseUrl: apiBase, userId }), [apiBase, userId]);
-  const [query, setQuery] = useState("");
+  const draftKey = `camcat:draft:${userId}:${project?.project_id ?? "new"}:${initialSession?.editing_session_id ?? "new"}`;
+  const [query, updateQuery] = useState(() => {
+    try { return sessionStorage.getItem(draftKey) ?? ""; } catch { return ""; }
+  });
+  function setQuery(value: string) {
+    updateQuery(value);
+    try { sessionStorage.setItem(draftKey, value); } catch { /* Editing still works without storage. */ }
+  }
+  const searchInFlight = useRef(false);
   const [status, setStatus] = useState<WorkspaceStatus>("idle");
   const [error, setError] = useState<string>();
   const [progress, setProgress] = useState<number>();
@@ -274,6 +283,7 @@ function useWorkspaceController({ project, initialSession, initialPage = "editin
   }
 
   async function handleSearch() {
+    if (searchInFlight.current || ["uploading", "rendering"].includes(status)) return;
     const trimmedQuery = query.trim();
     if (!trimmedQuery) {
       setError("请输入需要检索或剪辑的需求。");
@@ -281,6 +291,7 @@ function useWorkspaceController({ project, initialSession, initialPage = "editin
       return;
     }
 
+    searchInFlight.current = true;
     setStatus("searching");
     setError(undefined);
     setRenderResult(undefined);
@@ -294,6 +305,7 @@ function useWorkspaceController({ project, initialSession, initialPage = "editin
         sourceJobId: sourceUpload?.job_id,
         projectId: project?.project_id,
         currentSession: editingSession,
+        onSessionCreated: setEditingSession,
         queryImageBase64,
         topK: searchDepth === "deep" ? 16 : 8,
         onAgentEvent: (event) => {
@@ -321,6 +333,8 @@ function useWorkspaceController({ project, initialSession, initialPage = "editin
     } catch (caught) {
       setError(errorMessage(caught));
       setStatus("error");
+    } finally {
+      searchInFlight.current = false;
     }
   }
 
@@ -359,11 +373,11 @@ function useWorkspaceController({ project, initialSession, initialPage = "editin
         onProgress: (job) => {
           setActiveJob(job);
           setProgress(job.progress);
-          setProgressLabel(`FFmpeg 正在生成成片 ${Math.round(job.progress * 100)}%`);
+          setProgressLabel(renderCheckpointLabel(job));
         },
       });
       setRenderResult(result);
-      setProgressLabel("FFmpeg 成片、SRT 与 ffprobe 元数据已生成");
+      setProgressLabel("成片已通过完整解码和时间线验证，等待内容质量确认");
       setStatus("ready");
     } catch (caught) {
       setError(errorMessage(caught));
@@ -417,6 +431,26 @@ function useWorkspaceController({ project, initialSession, initialPage = "editin
     setError(undefined);
   }
 
+  async function handleRefreshSession() {
+    if (!editingSession) return;
+    setStatus("searching");
+    try {
+      const current = await api.getEditingSession(editingSession.editing_session_id);
+      if (current.state_version !== editingSession.state_version) {
+        setRenderResult(undefined);
+        setAgentRun(undefined);
+      }
+      setEditingSession(current);
+      setAuditEvents((await api.getEditingSessionAudit(current.editing_session_id)).items);
+      setError(undefined);
+      setProgressLabel("已加载最新版本，输入内容已保留，请确认后重新发送。");
+      setStatus("ready");
+    } catch (caught) {
+      setError(errorMessage(caught));
+      setStatus("error");
+    }
+  }
+
   async function handleRollback() {
     if (!editingSession || editingSession.state_version <= 1) return;
     setStatus("searching");
@@ -438,20 +472,10 @@ function useWorkspaceController({ project, initialSession, initialPage = "editin
 
   async function persistClips(clips: Array<Record<string, unknown>>, reason: string) {
     if (!editingSession) return;
-    let cursor = 0;
-    const sequenced = clips.map((clip) => {
-      const duration = Number(clip.source_end) - Number(clip.source_start);
-      const next = { ...clip, output_start: cursor, output_end: cursor + duration };
-      cursor += duration;
-      return next;
-    });
     const updated = await api.patchEditingSession(
       editingSession.editing_session_id,
       editingSession.state_version,
-      [
-        { op: "replace", path: "/clips", value: sequenced },
-        { op: "replace", path: "/target_duration", value: cursor },
-      ],
+      [{ op: "replace", path: "/clips", value: clips }],
       reason,
     );
     setEditingSession(updated);
@@ -534,6 +558,7 @@ function useWorkspaceController({ project, initialSession, initialPage = "editin
     handleRender,
     handleQueryImage,
     handleRollback,
+    handleRefreshSession,
     handleReorderClip,
     handleTrimClip,
     handleSplitClip,
@@ -571,6 +596,24 @@ async function copyText(value: string) {
     textarea.remove();
     if (!copied) throw new Error("浏览器未授权剪贴板访问");
   }
+}
+
+function renderCheckpointLabel(job: JobResponse) {
+  const stage = String(job.checkpoint?.stage ?? "queued");
+  const labels: Record<string, string> = {
+    queued: "等待渲染 Worker",
+    state_loaded: "已固定 StateVersion",
+    sources_fingerprinted: "素材指纹已核验",
+    timeline_compiled: "确定性时间线已编译",
+    compiled_verified: "时间线不变量已验证",
+    build_created: "不可变 RenderBuild 已创建",
+    build_verified: "RenderBuild 已验证",
+    render_started: "FFmpeg 正在执行编译时间线",
+    encoded: "编码完成，正在完整解码验证",
+    decode_verified: "帧数、时长与完整解码已验证",
+    artifact_uploaded: "成片与 provenance 已上传",
+  };
+  return `${labels[stage] ?? stage} ${Math.round(job.progress * 100)}%`;
 }
 
 function MediaProcessingPage({ workspace }: { workspace: WorkspaceController }) {
@@ -686,6 +729,8 @@ function RenderStatusPage({ workspace }: { workspace: WorkspaceController }) {
                 <dt className="text-[#707983]">时长</dt><dd className="text-white">{output?.duration_seconds ? `${output.duration_seconds.toFixed(2)} 秒` : `${Number(workspace.editingSession?.state.target_duration ?? 0).toFixed(1)} 秒`}</dd>
                 <dt className="text-[#707983]">字幕</dt><dd className="text-white">{output?.subtitle_url ? "SRT 已生成并烧录" : "根据剪辑计划烧录"}</dd>
                 <dt className="text-[#707983]">处理器</dt><dd className="font-mono text-white">FFmpeg / ffprobe</dd>
+                <dt className="text-[#707983]">技术验证</dt><dd className="text-white">{String(output?.verification_status ?? "等待验证")}</dd>
+                <dt className="text-[#707983]">帧差</dt><dd className="font-mono text-white">{String(output?.frame_delta ?? "—")}</dd>
               </dl>
               <div className="mt-auto flex flex-wrap gap-3 pt-8">
                 {complete && <button type="button" onClick={workspace.showEditingPage} className="rounded-[12px] bg-[#f5f7f8] px-5 py-3 text-[13px] font-semibold text-black hover:bg-white">确认并返回编辑</button>}
@@ -1182,19 +1227,37 @@ function EditorWorkspace({ workspace }: { workspace: WorkspaceController }) {
   const [workspaceMode, setWorkspaceMode] = useState<"edit" | "review">("edit");
   const [fitMode, setFitMode] = useState<"contain" | "cover">("contain");
   const [planTab, setPlanTab] = useState("Editing Plan");
-  const sessionClips = (workspace.editingSession?.state.clips ?? []).map((clip, index) => ({
-    id: String(clip.clip_id ?? `clip-${index + 1}`),
-    label: String(clip.reason ?? `素材片段 ${index + 1}`),
-    start: Number(clip.output_start ?? 0),
-    end: Number(clip.output_end ?? 0),
-  }));
-  const sessionSubtitles = (workspace.editingSession?.state.subtitles ?? []).map((subtitle, index) => ({
-    id: String(subtitle.subtitle_id ?? `subtitle-${index + 1}`),
-    label: String(subtitle.text ?? ""),
-    start: Number(subtitle.start ?? 0),
-    end: Number(subtitle.end ?? 0),
-    tone: "green" as const,
-  }));
+  let previewCursor = 0;
+  const sessionClips = (workspace.editingSession?.state.clips ?? []).map((clip, index) => {
+    const speed = Math.max(0.1, Number(clip.speed ?? 1));
+    const duration = Math.max(0, (Number(clip.source_end) - Number(clip.source_start)) / speed);
+    const preview = {
+      id: String(clip.clip_id ?? `clip-${index + 1}`),
+      label: String(clip.reason ?? `素材片段 ${index + 1}`),
+      start: previewCursor,
+      end: previewCursor + duration,
+      sourceStart: Number(clip.source_start),
+      speed,
+    };
+    previewCursor += duration;
+    return preview;
+  });
+  const sessionSubtitles = (workspace.editingSession?.state.subtitles ?? []).map((subtitle, index) => {
+    const clip = sessionClips.find((item) => item.id === String(subtitle.clip_id));
+    const start = clip
+      ? clip.start + (Number(subtitle.source_start) - clip.sourceStart) / clip.speed
+      : 0;
+    const end = clip
+      ? clip.start + (Number(subtitle.source_end) - clip.sourceStart) / clip.speed
+      : start;
+    return {
+      id: String(subtitle.subtitle_id ?? `subtitle-${index + 1}`),
+      label: String(subtitle.text ?? ""),
+      start,
+      end,
+      tone: "green" as const,
+    };
+  });
   const visiblePlan = sessionClips;
   const visibleSubtitles = sessionSubtitles;
   const timelineDuration = Math.max(1, ...visiblePlan.map((clip) => clip.end));
@@ -1817,6 +1880,8 @@ function AgentInputBar({ workspace }: { workspace: WorkspaceController }) {
   const imageInputRef = useRef<HTMLInputElement>(null);
   const busy = workspace.status === "uploading" || workspace.status === "searching" || workspace.status === "rendering";
   const [listening, setListening] = useState(false);
+  const composing = useRef(false);
+  const [voiceError, setVoiceError] = useState<string>();
 
   async function onFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
@@ -1837,6 +1902,7 @@ function AgentInputBar({ workspace }: { workspace: WorkspaceController }) {
 
   function submit(event: React.FormEvent) {
     event.preventDefault();
+    if (busy || composing.current || !workspace.query.trim()) return;
     void workspace.handleSearch();
   }
 
@@ -1854,16 +1920,17 @@ function AgentInputBar({ workspace }: { workspace: WorkspaceController }) {
     };
     const SpeechRecognition = browserWindow.SpeechRecognition ?? browserWindow.webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      workspace.setQuery(`${workspace.query}${workspace.query ? " " : ""}[当前浏览器不支持语音输入]`);
+      setVoiceError("当前浏览器不支持语音输入，请直接输入剪辑需求。");
       return;
     }
     const recognition = new SpeechRecognition();
     recognition.lang = "zh-CN";
     recognition.onresult = (event) => workspace.setQuery(event.results[0][0].transcript);
     recognition.onend = () => setListening(false);
-    recognition.onerror = () => setListening(false);
+    recognition.onerror = () => { setListening(false); setVoiceError("语音输入未成功，请检查麦克风权限或直接输入。"); };
+    setVoiceError(undefined);
     setListening(true);
-    recognition.start();
+    try { recognition.start(); } catch { setListening(false); setVoiceError("无法启动麦克风，请直接输入。"); }
   }
 
   return (
@@ -1872,7 +1939,7 @@ function AgentInputBar({ workspace }: { workspace: WorkspaceController }) {
         <span className="inline-flex items-center gap-1.5 rounded-full border border-[#25282b] bg-[#0a0b0c] px-2.5 py-1 text-[10px] font-medium text-[#9ca3af]">
           Auto {String(workspace.editingSession?.state.settings?.aspect_ratio ?? "ratio")}
         </span>
-        <InputToolButton type="button" onClick={() => fileInputRef.current?.click()}>
+        <InputToolButton type="button" disabled={busy} onClick={() => fileInputRef.current?.click()}>
           {workspace.status === "uploading" ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
           ) : (
@@ -1883,7 +1950,7 @@ function AgentInputBar({ workspace }: { workspace: WorkspaceController }) {
         <InputToolButton type="button" onClick={workspace.handleRender} disabled={!workspace.canRender || busy}>
           <Scissors className="h-3.5 w-3.5" /> Render
         </InputToolButton>
-        <InputToolButton type="button" onClick={() => imageInputRef.current?.click()}>
+        <InputToolButton type="button" disabled={busy} onClick={() => imageInputRef.current?.click()}>
           <ImageIcon className="h-3.5 w-3.5" /> {workspace.queryImageName ?? "Reference image"}
         </InputToolButton>
         <InputToolButton
@@ -1900,6 +1967,12 @@ function AgentInputBar({ workspace }: { workspace: WorkspaceController }) {
         </button>
         <input
           id="agent-query"
+          aria-label="剪辑需求"
+          onCompositionStart={() => { composing.current = true; }}
+          onCompositionEnd={() => { composing.current = false; }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && (event.nativeEvent.isComposing || composing.current || event.keyCode === 229)) event.preventDefault();
+          }}
           value={workspace.query}
           onChange={(event) => workspace.setQuery(event.target.value)}
           className="h-11 w-full rounded-full border border-[#25282b] bg-[#080909] pl-11 pr-[130px] text-[12px] text-[#edf1f4] outline-none placeholder:text-[#69717b] focus:border-[#37404a]"
@@ -1916,7 +1989,8 @@ function AgentInputBar({ workspace }: { workspace: WorkspaceController }) {
           </button>
           <button
             type="submit"
-            disabled={busy}
+            aria-label="发送剪辑需求"
+            disabled={busy || !workspace.query.trim()}
             className="grid h-8 w-8 place-items-center rounded-full bg-[#f5f7f8] text-[#050606] transition hover:bg-white disabled:cursor-not-allowed disabled:bg-[#2a2d31] disabled:text-[#7b838c]"
           >
             {workspace.status === "searching" ? (
@@ -1927,6 +2001,10 @@ function AgentInputBar({ workspace }: { workspace: WorkspaceController }) {
           </button>
         </div>
       </div>
+      <div role={workspace.error || voiceError ? "alert" : "status"} aria-live="polite" className="mt-2 text-[11px] text-[#9ca3af]">
+        {workspace.error ?? voiceError ?? (busy ? workspace.progressLabel : "Enter 发送 · 输入自动保留在当前浏览器标签页")}
+      </div>
+      {workspace.error && workspace.editingSession && <button type="button" disabled={busy} onClick={() => void workspace.handleRefreshSession()} className="mt-2 text-[12px] text-[#6cc7ff] underline">刷新剪辑版本</button>}
     </form>
   );
 }
