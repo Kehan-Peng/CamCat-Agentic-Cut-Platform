@@ -395,6 +395,7 @@ class Worker:
                 {
                     "segment_id": str(segment.id),
                     "asset_id": str(asset.id),
+                    "storage_key": segment.storage_key,
                     "multimodal_embedding": vector,
                     "description_text": caption,
                     "start_time": float(segment.start_time),

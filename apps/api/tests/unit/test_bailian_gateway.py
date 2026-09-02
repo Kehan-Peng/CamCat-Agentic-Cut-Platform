@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from camcat.gateway.bailian import (
     CANONICAL_EMBEDDING_MODEL,
     CANONICAL_RERANKER_MODEL,
@@ -78,13 +77,12 @@ def test_bailian_embedding_response_is_not_averaged() -> None:
         )
 
 
-def test_bailian_rerank_keeps_mixed_query_and_visual_documents() -> None:
+def test_bailian_rerank_maps_one_official_query_modality_and_keeps_metadata() -> None:
     payload, metadata = build_rerank_payload(
         canonical_model=CANONICAL_RERANKER_MODEL,
-        query={"text": "sunset", "image_base64": "data:image/jpeg;base64,YQ=="},
+        query={"image_base64": "data:image/jpeg;base64,YQ=="},
         documents=[
             {
-                "text": "beach",
                 "video_url": "https://media.example/segment.mp4?signature=short-lived",
                 "metadata": {"segment_id": "seg-1", "license_name": "Pixabay"},
             }
@@ -93,18 +91,21 @@ def test_bailian_rerank_keeps_mixed_query_and_visual_documents() -> None:
     )
 
     assert payload["model"] == "qwen3-vl-rerank"
-    assert payload["input"]["query"] == {
-        "text": "sunset",
-        "image": "data:image/jpeg;base64,YQ==",
-    }
+    assert payload["input"]["query"] == {"image": "data:image/jpeg;base64,YQ=="}
     assert payload["input"]["documents"] == [
-        {
-            "text": "beach",
-            "video": "https://media.example/segment.mp4?signature=short-lived",
-        }
+        {"video": "https://media.example/segment.mp4?signature=short-lived"}
     ]
     assert payload["parameters"]["instruct"] == "Rank clips for editing."
     assert metadata == [{"segment_id": "seg-1", "license_name": "Pixabay"}]
+
+
+def test_bailian_rerank_rejects_unsupported_mixed_upstream_objects() -> None:
+    with pytest.raises(ValueError, match="exactly one query modality"):
+        build_rerank_payload(
+            canonical_model=CANONICAL_RERANKER_MODEL,
+            query={"text": "sunset", "image_base64": "data:image/jpeg;base64,YQ=="},
+            documents=[{"text": "beach"}],
+        )
 
 
 def test_bailian_rerank_response_uses_original_document_indices() -> None:

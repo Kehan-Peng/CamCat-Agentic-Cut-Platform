@@ -25,7 +25,7 @@ def test_semantic_metadata_schema_uses_a_new_collection_namespace(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("CAMCAT_MILVUS_COLLECTION", raising=False)
-    assert _settings().milvus_collection == "camcat_segments_v5"
+    assert _settings().milvus_collection == "camcat_segments_v6"
 
 
 def test_upsert_rejects_rows_without_license_source_and_semantics() -> None:
@@ -40,3 +40,43 @@ def test_upsert_rejects_rows_without_license_source_and_semantics() -> None:
             }
         )
     store._client.upsert.assert_not_called()
+
+    with pytest.raises(ValueError, match="storage_key"):
+        store.upsert(
+            {
+                "multimodal_embedding": [0.1] * 2048,
+                "embedding_model": "Qwen/Qwen3-VL-Embedding-8B",
+                "semantic_metadata": {"scene": "shore"},
+                "license_name": "Pixabay",
+                "source_url": "https://pixabay.example/source",
+            }
+        )
+
+
+def test_existing_collection_waits_for_concurrent_index_creation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = MilvusSegmentStore(_settings())
+    client = Mock()
+    client.has_collection.return_value = True
+    client.describe_collection.return_value = {
+        "fields": [
+            {"name": name, "params": {"dim": 2048}}
+            for name in (
+                *store.output_fields,
+                "multimodal_embedding",
+                "sparse",
+            )
+        ]
+    }
+    client.list_indexes.side_effect = [
+        ["multimodal_embedding"],
+        ["multimodal_embedding", "sparse"],
+    ]
+    store._client = client
+    monkeypatch.setattr("camcat.retrieval.milvus_store.time.sleep", lambda _seconds: None)
+
+    store.ensure_collection()
+
+    assert client.list_indexes.call_count == 2
+    client.load_collection.assert_called_once_with(collection_name=store.collection)

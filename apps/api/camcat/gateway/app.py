@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hmac
+import ipaddress
 import json
 import mimetypes
 from dataclasses import dataclass
@@ -9,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 from typing import Any, BinaryIO, Protocol
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
@@ -17,7 +19,6 @@ from starlette.responses import JSONResponse
 
 from camcat.gateway.bailian import (
     CANONICAL_EMBEDDING_MODEL,
-    CANONICAL_RERANKER_MODEL,
     build_embedding_payload,
     build_rerank_payload,
     extract_embedding_response,
@@ -94,6 +95,10 @@ def create_gateway_app(
 
     Authorized = Depends(authorize)
 
+    @app.get("/health/live")
+    def liveness() -> dict[str, str]:
+        return {"status": "ok"}
+
     @app.get("/health", dependencies=[Authorized])
     def health() -> dict[str, str]:
         return {"status": "ok", "provider": "aliyun-bailian"}
@@ -107,10 +112,7 @@ def create_gateway_app(
         image: UploadFile | None = File(default=None),
         video: UploadFile | None = File(default=None),
         fps: float | None = Form(default=None),
-        max_frames: int | None = Form(default=None),
     ) -> dict[str, Any]:
-        if max_frames is not None and not 1 <= max_frames <= 64:
-            raise HTTPException(422, "max_frames must be between 1 and 64")
         image_data_uri: str | None = None
         if image is not None:
             content = await _read_upload(image, maximum_bytes=config.maximum_image_bytes)
@@ -142,6 +144,7 @@ def create_gateway_app(
                 video_url = object_store.signed_url(
                     staged_key, expires_seconds=config.staging_url_seconds
                 )
+                _require_public_video_url(video_url)
             try:
                 payload = build_embedding_payload(
                     canonical_model=model,
@@ -168,23 +171,36 @@ def create_gateway_app(
     def rerank(body: RerankBody) -> dict[str, Any]:
         if body.top_n != len(body.documents):
             raise HTTPException(422, "CamCat gateway requires one score per document")
-        try:
-            payload, _metadata = build_rerank_payload(
-                canonical_model=body.model,
-                query=body.query,
-                documents=body.documents,
-                instruction=body.instruction,
-            )
-        except ValueError as exc:
-            raise HTTPException(422, str(exc)) from exc
-        upstream_payload = upstream.post_json(config.reranker_path, payload)
-        try:
-            results = extract_rerank_response(
-                upstream_payload, document_count=len(body.documents)
-            )
-        except ValueError as exc:
-            raise HTTPException(502, str(exc)) from exc
-        return {"results": results}
+        query_variants = _rerank_query_variants(body.query)
+        document_variants = _rerank_document_variants(body.documents)
+        scores_by_index = {index: 0.0 for index in range(len(body.documents))}
+        for query in query_variants:
+            for documents in document_variants:
+                try:
+                    payload, _metadata = build_rerank_payload(
+                        canonical_model=body.model,
+                        query=query,
+                        documents=documents,
+                        instruction=body.instruction,
+                    )
+                except ValueError as exc:
+                    raise HTTPException(422, str(exc)) from exc
+                upstream_payload = upstream.post_json(config.reranker_path, payload)
+                try:
+                    results = extract_rerank_response(
+                        upstream_payload, document_count=len(body.documents)
+                    )
+                except ValueError as exc:
+                    raise HTTPException(502, str(exc)) from exc
+                for item in results:
+                    scores_by_index[int(item["index"])] += float(item["relevance_score"])
+        divisor = float(len(query_variants) * len(document_variants))
+        return {
+            "results": [
+                {"index": index, "relevance_score": score / divisor}
+                for index, score in scores_by_index.items()
+            ]
+        }
 
     @app.post("/v1/chat/completions", dependencies=[Authorized])
     def chat_completions(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
@@ -216,16 +232,20 @@ def create_gateway_app(
         filename = Path(video.filename or "source.mp4").name
         staged_key = f"temporary/provider-staging/{uuid4()}/{filename}"
         expires_at = datetime.now(UTC) + timedelta(seconds=config.staging_url_seconds)
-        object_store.upload_stream(
-            BytesIO(content),
-            staged_key,
-            media_type,
-            metadata={"kind": "provider-staging", "expires-at": expires_at.isoformat()},
-        )
         try:
+            object_store.upload_stream(
+                BytesIO(content),
+                staged_key,
+                media_type,
+                metadata={
+                    "kind": "provider-staging",
+                    "expires-at": expires_at.isoformat(),
+                },
+            )
             video_url = object_store.signed_url(
                 staged_key, expires_seconds=config.staging_url_seconds
             )
+            _require_public_video_url(video_url)
             transcript_context = transcript.strip() or "(no transcript available)"
             payload = {
                 "model": model,
@@ -334,3 +354,64 @@ def _parse_json_content(content: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise ValueError("visual analysis upstream response must be a JSON object")
     return parsed
+
+
+def _rerank_query_variants(query: dict[str, Any]) -> list[dict[str, Any]]:
+    variants: list[dict[str, Any]] = []
+    text = query.get("text")
+    if isinstance(text, str) and text.strip():
+        variants.append({"text": text.strip()})
+    image = query.get("image_base64", query.get("image"))
+    if isinstance(image, str) and image:
+        variants.append({"image_base64": image})
+    if not variants:
+        raise HTTPException(422, "reranker query requires text or image")
+    return variants
+
+
+def _rerank_document_variants(
+    documents: list[dict[str, Any]],
+) -> list[list[dict[str, Any]]]:
+    variants: list[list[dict[str, Any]]] = []
+    modality_fields = (
+        ("text", "text"),
+        ("image_base64", "image_base64"),
+        ("video_url", "video_url"),
+    )
+    for input_field, output_field in modality_fields:
+        values = [document.get(input_field) for document in documents]
+        if all(isinstance(value, str) and value.strip() for value in values):
+            if input_field == "video_url":
+                for value in values:
+                    _require_public_video_url(str(value))
+            variants.append(
+                [
+                    {
+                        output_field: str(value).strip(),
+                        "metadata": dict(document.get("metadata") or {}),
+                    }
+                    for document, value in zip(documents, values, strict=True)
+                ]
+            )
+    if not variants:
+        raise HTTPException(
+            422,
+            "reranker documents require one common text, image or video modality",
+        )
+    return variants
+
+
+def _require_public_video_url(value: str) -> None:
+    parsed = urlparse(value)
+    hostname = (parsed.hostname or "").lower()
+    private = parsed.scheme != "https" or not hostname or "." not in hostname
+    if not private:
+        try:
+            private = ipaddress.ip_address(hostname).is_private
+        except ValueError:
+            private = hostname == "localhost" or hostname.endswith(".local")
+    if private:
+        raise HTTPException(
+            503,
+            "provider video staging requires a publicly reachable HTTPS object-store endpoint",
+        )

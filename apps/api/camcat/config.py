@@ -31,14 +31,13 @@ class Settings(BaseSettings):
 
     milvus_uri: str = "http://milvus:19530"
     milvus_token: SecretStr = SecretStr("")
-    milvus_collection: str = "camcat_segments_v5"
+    milvus_collection: str = "camcat_segments_v6"
 
     embedding_base_url: str
     embedding_api_key: SecretStr
     embedding_model: str = "Qwen/Qwen3-VL-Embedding-8B"
     embedding_dimension: int = 2048
     embedding_video_fps: float = 1.0
-    embedding_video_max_frames: int = 64
     reranker_base_url: str
     reranker_api_key: SecretStr
     reranker_model: str = "Qwen/Qwen3-VL-Reranker-8B"
@@ -48,6 +47,10 @@ class Settings(BaseSettings):
     asr_base_url: str
     asr_api_key: SecretStr
     asr_model: str = "qwen3-asr-flash"
+
+    provider_gateway_api_key: SecretStr = SecretStr("")
+    bailian_api_host: str = ""
+    bailian_api_key: SecretStr = SecretStr("")
 
     provider_timeout_seconds: float = 120.0
     provider_max_retries: int = 2
@@ -108,6 +111,50 @@ class Settings(BaseSettings):
                     "placeholder provider configuration is forbidden outside test mode: "
                     + ", ".join(placeholders)
                 )
+            provider_urls = {
+                self.embedding_base_url,
+                self.reranker_base_url,
+                self.llm_base_url,
+                self.asr_base_url,
+            }
+            if any("provider-gateway" in url for url in provider_urls):
+                gateway_key = self.provider_gateway_api_key.get_secret_value()
+                bailian_key = self.bailian_api_key.get_secret_value()
+                if not gateway_key or not self.bailian_api_host or not bailian_key:
+                    raise ValueError(
+                        "managed Bailian gateway requires CAMCAT_PROVIDER_GATEWAY_API_KEY, "
+                        "CAMCAT_BAILIAN_API_HOST and CAMCAT_BAILIAN_API_KEY"
+                    )
+                bailian_values = {
+                    "CAMCAT_PROVIDER_GATEWAY_API_KEY": gateway_key,
+                    "CAMCAT_BAILIAN_API_HOST": self.bailian_api_host,
+                    "CAMCAT_BAILIAN_API_KEY": bailian_key,
+                }
+                bailian_placeholders = [
+                    name
+                    for name, value in bailian_values.items()
+                    if "change-me" in value.lower()
+                    or "placeholder" in value.lower()
+                    or ".invalid" in value.lower()
+                ]
+                if bailian_placeholders:
+                    raise ValueError(
+                        "placeholder Bailian gateway configuration is forbidden: "
+                        + ", ".join(bailian_placeholders)
+                    )
+                if not self.bailian_api_host.startswith(("http://", "https://")):
+                    raise ValueError("CAMCAT_BAILIAN_API_HOST must be an absolute HTTP(S) URL")
+                provider_keys = {
+                    self.embedding_api_key.get_secret_value(),
+                    self.reranker_api_key.get_secret_value(),
+                    self.llm_api_key.get_secret_value(),
+                    self.asr_api_key.get_secret_value(),
+                }
+                if provider_keys != {gateway_key}:
+                    raise ValueError(
+                        "managed Bailian gateway provider API keys must equal "
+                        "CAMCAT_PROVIDER_GATEWAY_API_KEY"
+                    )
         return self
 
 

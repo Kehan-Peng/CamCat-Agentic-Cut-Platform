@@ -88,7 +88,10 @@ class Services:
         self.llm = QwenChatClient(settings)
         self.asr = QwenAsrClient(settings)
         self.retrieval = RetrievalService(
-            store=self.milvus, embedding=self.embedding, reranker=self.reranker
+            store=self.milvus,
+            embedding=self.embedding,
+            reranker=self.reranker,
+            media_signer=self.object_store,
         )
         self.graph = CamCatGraph(llm=self.llm, retrieval=self.retrieval)
 

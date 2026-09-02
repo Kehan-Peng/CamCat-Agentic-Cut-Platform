@@ -7,7 +7,7 @@ down:
 	docker compose down
 
 logs:
-	docker compose logs -f api worker web
+	docker compose logs -f provider-gateway api worker web
 
 test: lint contracts-check test-unit test-web
 
@@ -27,7 +27,7 @@ e2e:
 	cd apps/web && npm run e2e
 
 lint:
-	.venv/bin/ruff check apps/api scripts tests
+	.venv/bin/python -m ruff check apps/api scripts tests
 	.venv/bin/python -m mypy apps/api/camcat
 
 contracts:

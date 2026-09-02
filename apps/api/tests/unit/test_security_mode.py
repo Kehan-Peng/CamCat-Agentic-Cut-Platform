@@ -79,3 +79,36 @@ def test_integration_mode_can_boot_without_contacting_external_providers() -> No
     )
 
     assert settings.environment == "test"
+
+
+def test_managed_bailian_gateway_requires_its_runtime_credentials() -> None:
+    common = {
+        "_env_file": None,
+        "environment": "development",
+        "embedding_base_url": "http://provider-gateway:8010",
+        "embedding_api_key": "gateway-secret",
+        "reranker_base_url": "http://provider-gateway:8010",
+        "reranker_api_key": "gateway-secret",
+        "llm_base_url": "http://provider-gateway:8010",
+        "llm_api_key": "gateway-secret",
+        "asr_base_url": "http://provider-gateway:8010",
+        "asr_api_key": "gateway-secret",
+    }
+    with pytest.raises(ValidationError, match="managed Bailian gateway requires"):
+        Settings(**common)
+
+    with pytest.raises(ValidationError, match="placeholder Bailian gateway configuration"):
+        Settings(
+            **common,
+            provider_gateway_api_key="gateway-secret",
+            bailian_api_host="https://workspace.example",
+            bailian_api_key="change-me",
+        )
+
+    settings = Settings(
+        **common,
+        provider_gateway_api_key="gateway-secret",
+        bailian_api_host="https://workspace.example",
+        bailian_api_key="rotated-bailian-key",
+    )
+    assert settings.bailian_api_host == "https://workspace.example"
