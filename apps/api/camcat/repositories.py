@@ -113,13 +113,19 @@ class StateRepository:
         return session, VersionedState(str(session.id), 1, document)
 
     def current(
-        self, session_id: UUID, *, owner_id: str | None = None
+        self,
+        session_id: UUID,
+        *,
+        owner_id: str | None = None,
+        include_deleted: bool = False,
     ) -> tuple[EditingSession, VersionedState]:
         query: Select[tuple[EditingSession]] = select(EditingSession).where(
             EditingSession.id == session_id
         )
         if owner_id is not None:
             query = query.where(EditingSession.owner_id == owner_id)
+        if not include_deleted:
+            query = query.where(EditingSession.deleted_at.is_(None))
         session = self.db.scalar(query)
         if session is None:
             raise LookupError("editing session not found")
@@ -144,6 +150,12 @@ class StateRepository:
         reason: str,
     ) -> VersionedState:
         _, before = self.current(session_id, owner_id=owner_id)
+        if base_version != before.version:
+            raise PatchConflict(
+                expected_version=base_version,
+                current_version=before.version,
+                current_patch=self._latest_patch_metadata(session_id),
+            )
         after, audit = apply_versioned_patch(
             before,
             base_version=base_version,
@@ -165,27 +177,10 @@ class StateRepository:
             current_version = self.db.scalar(
                 select(EditingSession.current_version).where(EditingSession.id == session_id)
             )
-            latest_patch = self.db.scalar(
-                select(StatePatch)
-                .where(StatePatch.session_id == session_id)
-                .order_by(StatePatch.result_version.desc())
-                .limit(1)
-            )
             raise PatchConflict(
                 expected_version=base_version,
                 current_version=int(current_version or before.version),
-                current_patch=(
-                    {
-                        "patch_id": str(latest_patch.id),
-                        "base_version": latest_patch.base_version,
-                        "result_version": latest_patch.result_version,
-                        "operations": latest_patch.operations,
-                        "actor": latest_patch.actor,
-                        "reason": latest_patch.reason,
-                    }
-                    if latest_patch
-                    else None
-                ),
+                current_patch=self._latest_patch_metadata(session_id),
             )
         self.db.add(
             StateVersion(session_id=session_id, version=after.version, document=after.document)
@@ -223,6 +218,24 @@ class StateRepository:
         )
         self.db.commit()
         return after
+
+    def _latest_patch_metadata(self, session_id: UUID) -> dict[str, Any] | None:
+        latest_patch = self.db.scalar(
+            select(StatePatch)
+            .where(StatePatch.session_id == session_id)
+            .order_by(StatePatch.result_version.desc())
+            .limit(1)
+        )
+        if latest_patch is None:
+            return None
+        return {
+            "patch_id": str(latest_patch.id),
+            "base_version": latest_patch.base_version,
+            "result_version": latest_patch.result_version,
+            "operations": latest_patch.operations,
+            "actor": latest_patch.actor,
+            "reason": latest_patch.reason,
+        }
 
     def rollback(
         self,

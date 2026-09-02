@@ -47,6 +47,7 @@ from camcat.schemas import (
     CreateEditingSessionRequest,
     CreateProjectRequest,
     EditingSessionResponse,
+    ErrorEnvelope,
     GraphRunResponse,
     ImportOpenMediaRequest,
     JobResponse,
@@ -109,6 +110,10 @@ app = FastAPI(
     version="0.1.0",
     description="Multimodal intelligent video editing harness",
     lifespan=lifespan,
+    responses={
+        status: {"model": ErrorEnvelope, "description": "CamCat error envelope"}
+        for status in (400, 401, 403, 404, 409, 410, 413, 415, 422, 500, 502)
+    },
 )
 app.add_middleware(
     CORSMiddleware,
@@ -161,6 +166,17 @@ async def http_error_handler(request: Request, exc: HTTPException) -> JSONRespon
         status=exc.status_code,
         code="http_error",
         message=str(exc.detail),
+        details={},
+    )
+
+
+@app.exception_handler(LookupError)
+async def lookup_error_handler(request: Request, exc: LookupError) -> JSONResponse:
+    return _error(
+        request,
+        status=404,
+        code="not_found",
+        message=str(exc),
         details={},
     )
 
@@ -472,15 +488,19 @@ def import_open_media(
         temporary.unlink(missing_ok=True)
 
 
-@app.get("/api/v1/videos", response_model=list[VideoResponse])
-def list_videos(db: Db, owner_id: Owner, limit: int = 50) -> list[VideoResponse]:
-    assets = db.scalars(
-        select(Asset)
-        .where(Asset.owner_id == owner_id)
-        .order_by(Asset.created_at.desc(), Asset.id)
-        .limit(min(100, max(1, limit)))
-    ).all()
-    return [_video_response(asset, db) for asset in assets]
+@app.get("/api/v1/videos", response_model=PageResponse)
+def list_videos(
+    db: Db, owner_id: Owner, limit: int = 50, cursor: UUID | None = None
+) -> PageResponse:
+    query = select(Asset).where(Asset.owner_id == owner_id)
+    if cursor:
+        query = query.where(Asset.id > cursor)
+    assets = db.scalars(query.order_by(Asset.id).limit(min(100, max(1, limit)) + 1)).all()
+    page, next_cursor = _slice_page(assets, limit)
+    return PageResponse(
+        items=[_video_response(asset, db).model_dump(mode="json") for asset in page],
+        next_cursor=next_cursor,
+    )
 
 
 @app.get("/api/v1/videos/{video_id}", response_model=VideoResponse)

@@ -29,8 +29,25 @@ class ObjectStore:
 
     def ensure_bucket(self) -> None:
         buckets = {item["Name"] for item in self._client.list_buckets().get("Buckets", [])}
+        existing_rules: list[dict[str, object]] = []
         if self.bucket not in buckets:
             self._client.create_bucket(Bucket=self.bucket)
+        else:
+            try:
+                lifecycle = self._client.get_bucket_lifecycle_configuration(Bucket=self.bucket)
+                existing_rules = [
+                    dict(rule)
+                    for rule in lifecycle.get("Rules", [])
+                    if rule.get("ID") != "expire-transient-user-media"
+                ]
+            except ClientError as exc:
+                error_code = str(exc.response.get("Error", {}).get("Code", ""))
+                if error_code not in {
+                    "404",
+                    "NoSuchLifecycle",
+                    "NoSuchLifecycleConfiguration",
+                }:
+                    raise
         # S3 lifecycle is the object-deletion source of truth. S3/MinIO lifecycle
         # exposes whole-day granularity, while the application redacts database
         # references at the exact four-hour boundary.
@@ -38,6 +55,7 @@ class ObjectStore:
             Bucket=self.bucket,
             LifecycleConfiguration={
                 "Rules": [
+                    *existing_rules,
                     {
                         "ID": "expire-transient-user-media",
                         "Status": "Enabled",
@@ -59,9 +77,22 @@ class ObjectStore:
             ExtraArgs={"ContentType": content_type, **({"Metadata": metadata} if metadata else {})},
         )
 
-    def upload_stream(self, stream: BinaryIO, key: str, content_type: str) -> None:
+    def upload_stream(
+        self,
+        stream: BinaryIO,
+        key: str,
+        content_type: str,
+        *,
+        metadata: dict[str, str] | None = None,
+    ) -> None:
         self._client.upload_fileobj(
-            stream, self.bucket, key, ExtraArgs={"ContentType": content_type}
+            stream,
+            self.bucket,
+            key,
+            ExtraArgs={
+                "ContentType": content_type,
+                **({"Metadata": metadata} if metadata else {}),
+            },
         )
 
     def download_file(self, key: str, path: Path) -> None:
