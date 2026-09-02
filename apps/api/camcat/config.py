@@ -31,7 +31,7 @@ class Settings(BaseSettings):
 
     milvus_uri: str = "http://milvus:19530"
     milvus_token: SecretStr = SecretStr("")
-    milvus_collection: str = "camcat_segments_v3"
+    milvus_collection: str = "camcat_segments_v4"
 
     embedding_base_url: str
     embedding_api_key: SecretStr
@@ -84,6 +84,30 @@ class Settings(BaseSettings):
                 raise ValueError("multi-user mode requires CAMCAT_TRUSTED_PROXY_SECRET")
             if not self.library_admin_key.get_secret_value():
                 raise ValueError("multi-user mode requires CAMCAT_LIBRARY_ADMIN_KEY")
+        if self.environment != "test":
+            provider_values = {
+                "CAMCAT_EMBEDDING_BASE_URL": self.embedding_base_url,
+                "CAMCAT_EMBEDDING_API_KEY": self.embedding_api_key.get_secret_value(),
+                "CAMCAT_RERANKER_BASE_URL": self.reranker_base_url,
+                "CAMCAT_RERANKER_API_KEY": self.reranker_api_key.get_secret_value(),
+                "CAMCAT_LLM_BASE_URL": self.llm_base_url,
+                "CAMCAT_LLM_API_KEY": self.llm_api_key.get_secret_value(),
+                "CAMCAT_ASR_BASE_URL": self.asr_base_url,
+                "CAMCAT_ASR_API_KEY": self.asr_api_key.get_secret_value(),
+            }
+            placeholders = [
+                name
+                for name, value in provider_values.items()
+                if not value.strip()
+                or "change-me" in value.lower()
+                or "placeholder" in value.lower()
+                or ".invalid" in value.lower()
+            ]
+            if placeholders:
+                raise ValueError(
+                    "placeholder provider configuration is forbidden outside test mode: "
+                    + ", ".join(placeholders)
+                )
         return self
 
 

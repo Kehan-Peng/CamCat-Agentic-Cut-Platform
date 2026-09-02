@@ -202,14 +202,19 @@ export function createCamCatApiClient({ baseUrl, userId, fetchImpl = fetch }: Cl
       });
     },
 
-    uploadVideo(
+    async uploadVideo(
       file: File,
-      provenance: { licenseName: string; sourceUrl: string } = {
-        licenseName: "user-provided",
-        sourceUrl: "local://user-upload",
-      },
+      provenance: { licenseName: string; sourceUrl: string },
       analysisMode: "keyframes" | "per-second" = "keyframes",
     ) {
+      if (
+        !provenance ||
+        !provenance.licenseName.trim() ||
+        provenance.licenseName.trim().toLowerCase() === "user-provided" ||
+        !/^https?:\/\//i.test(provenance.sourceUrl)
+      ) {
+        throw new Error("Permanent library imports require a license and HTTP(S) source URL");
+      }
       const form = new FormData();
       form.append("file", file);
       form.append("license_name", provenance.licenseName);
@@ -317,8 +322,11 @@ export function createCamCatApiClient({ baseUrl, userId, fetchImpl = fetch }: Cl
       let completed: EditingSessionResponse | undefined;
       let agentRun: AgenticSearchResponse | undefined;
       let graphRunId: string | undefined;
+      let lastEventId = -1;
       try {
         for await (const event of parseServerSentEvents(response.body)) {
+          const parsedId = Number.parseInt(event.id ?? "", 10);
+          if (Number.isFinite(parsedId)) lastEventId = Math.max(lastEventId, parsedId);
           const progress = { event: event.event, ...JSON.parse(event.data) } as AgentProgressEvent;
           graphRunId = progress.graph_run_id ?? graphRunId;
           onEvent(progress);
@@ -331,6 +339,24 @@ export function createCamCatApiClient({ baseUrl, userId, fetchImpl = fetch }: Cl
         if (!completed) throw new Error("Agent 进度流提前中断");
       } catch (error) {
         if (!graphRunId) throw error;
+        try {
+          const replayPath = `/api/v1/graph-runs/${encodeURIComponent(graphRunId)}/events?after=${lastEventId}`;
+          const replayResponse = await fetchImpl(`${normalizedBaseUrl}${replayPath}`, {
+            method: "GET",
+            headers: { "X-User-Id": userId },
+          });
+          if (replayResponse.ok && replayResponse.body) {
+            for await (const event of parseServerSentEvents(replayResponse.body)) {
+              const progress = {
+                event: event.event,
+                ...JSON.parse(event.data),
+              } as AgentProgressEvent;
+              onEvent(progress);
+            }
+          }
+        } catch {
+          // Polling below remains the recovery source of truth when event replay also disconnects.
+        }
         for (let attempt = 0; attempt < 120; attempt += 1) {
           const run = await requestJson<{ status: string; editing_session_id?: string }>(
             `/api/v1/graph-runs/${encodeURIComponent(graphRunId)}`,

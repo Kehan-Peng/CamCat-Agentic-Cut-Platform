@@ -87,13 +87,7 @@ class Worker:
                     error = sanitize_job_error(exc)
                     repository.fail(job, error)
                     if job.kind == JobKind.INGEST_MEDIA and job.status == JobStatus.DEAD_LETTER:
-                        asset_id = UUID(str(job.payload["asset_id"]))
-                        failed_asset = db.get(Asset, asset_id)
-                        if failed_asset is not None:
-                            failed_asset.status = AssetStatus.FAILED
-                            failed_asset.error = error
-                        self._compensate_failed_ingest(asset_id, db)
-                        db.commit()
+                        self._finalize_failed_ingest(job, db, error)
 
     def _run_maintenance(self, repository: JobRepository) -> None:
         lock_key = 7_823_441_901
@@ -104,6 +98,13 @@ class Worker:
             return
         try:
             cutoff = utcnow()
+            repository.expire_exhausted_leases(now=cutoff)
+            for dead_job in repository.pending_ingest_compensations():
+                self._finalize_failed_ingest(
+                    dead_job,
+                    repository.db,
+                    dead_job.error or "worker lease expired after maximum attempts",
+                )
             expired_jobs = repository.db.scalars(
                 select(Job).where(Job.expires_at <= cutoff, Job.redacted_at.is_(None))
             ).all()
@@ -116,11 +117,58 @@ class Worker:
         finally:
             repository.db.scalar(text("SELECT pg_advisory_unlock(:key)"), {"key": lock_key})
 
-    def _compensate_failed_ingest(self, asset_id: UUID, db: Any) -> None:
-        self.milvus.delete_asset(str(asset_id))
-        self.object_store.delete_prefix(f"segments/{asset_id}/")
-        self.object_store.delete_prefix(f"thumbnails/{asset_id}/")
-        db.execute(delete(Segment).where(Segment.asset_id == asset_id))
+    def _finalize_failed_ingest(self, job: Job, db: Any, error: str) -> None:
+        try:
+            asset_id = UUID(str(job.payload["asset_id"]))
+        except (KeyError, TypeError, ValueError) as exc:
+            checkpoint = dict(job.checkpoint or {})
+            checkpoint.update(
+                {
+                    "stage": "compensation_failed",
+                    "updated_at": utcnow().isoformat(),
+                    "failures": [f"payload: {sanitize_job_error(exc)}"],
+                }
+            )
+            job.checkpoint = checkpoint
+            db.commit()
+            return
+        failures = self._compensate_failed_ingest(asset_id, db)
+        failed_asset = db.get(Asset, asset_id)
+        if failed_asset is not None:
+            failed_asset.status = AssetStatus.FAILED
+            failed_asset.error = error
+        checkpoint = dict(job.checkpoint or {})
+        checkpoint.update(
+            {
+                "stage": "compensation_pending" if failures else "compensated",
+                "updated_at": utcnow().isoformat(),
+                "failures": failures,
+            }
+        )
+        job.checkpoint = checkpoint
+        db.commit()
+
+    def _compensate_failed_ingest(self, asset_id: UUID | str, db: Any) -> list[str]:
+        failures: list[str] = []
+        external_steps = (
+            ("milvus", lambda: self.milvus.delete_asset(str(asset_id))),
+            ("segments", lambda: self.object_store.delete_prefix(f"segments/{asset_id}/")),
+            (
+                "thumbnails",
+                lambda: self.object_store.delete_prefix(f"thumbnails/{asset_id}/"),
+            ),
+        )
+        for name, cleanup in external_steps:
+            try:
+                cleanup()
+            except Exception as exc:
+                failures.append(f"{name}: {sanitize_job_error(exc)}")
+        try:
+            db.execute(delete(Segment).where(Segment.asset_id == asset_id))
+        except Exception as exc:
+            db.rollback()
+            failures.append(f"postgres: {sanitize_job_error(exc)}")
+        return failures
 
     def _execute_job(self, job: Job, repository: JobRepository) -> dict[str, Any]:
         job_dir = Path(self.settings.runtime_dir) / "jobs" / str(job.id)

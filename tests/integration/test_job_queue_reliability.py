@@ -60,3 +60,31 @@ def test_queued_job_can_be_cancelled_and_explicitly_retried() -> None:
         assert job.status == JobStatus.QUEUED
         db.delete(db.get(Job, job.id))
         db.commit()
+
+
+def test_crashed_job_at_attempt_limit_is_persisted_for_compensation() -> None:
+    with SessionLocal() as db:
+        repository = JobRepository(db)
+        job = repository.enqueue(
+            owner_id=f"crashed-{uuid4()}",
+            kind=JobKind.INGEST_MEDIA,
+            payload={"asset_id": str(uuid4())},
+            max_attempts=1,
+        )
+        claimed = repository.claim_next(worker_id="worker-that-crashes", lease_seconds=60)
+        assert claimed is not None and claimed.id == job.id
+        claimed.lease_expires_at = utcnow() - timedelta(seconds=1)
+        db.commit()
+
+    with SessionLocal() as db:
+        repository = JobRepository(db)
+        expired = repository.expire_exhausted_leases()
+        assert [item.id for item in expired] == [job.id]
+        pending = repository.pending_ingest_compensations()
+        assert job.id in {item.id for item in pending}
+        persisted = db.get(Job, job.id)
+        assert persisted is not None
+        assert persisted.status == JobStatus.DEAD_LETTER
+        assert persisted.checkpoint["stage"] == "dead_lettered"
+        db.delete(persisted)
+        db.commit()
