@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "note": "Licensed library imports retain source_url and license_name. User originals are transient and are not library records. Downloaded media is intentionally not committed.",
+  "sources": [
+    {
+      "provider": "Pixabay",
+      "api": "https://pixabay.com/api/docs/",
+      "license": "https://pixabay.com/service/license-summary/",
+      "usage": "Default short-video library importer. Trial mode ingests only a small safe-search sample, stores files locally, and preserves each source page."
+    },
+    {
+      "provider": "Mixkit",
+      "api": "https://mixkit.co/free-stock-music/",
+      "license": "https://mixkit.co/license/",
+      "usage": "Small BGM, ambient, and sound-effect catalog for real audio mixing; exact item metadata is recorded in open-audio-library.json."
+    }
+  ]
+}

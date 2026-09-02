@@ -1,0 +1,188 @@
+name: camcat
+
+x-api-environment: &api-environment
+  CAMCAT_DATABASE_URL: ${CAMCAT_DATABASE_URL:-postgresql+psycopg://camcat:camcat@postgres:5432/camcat}
+  CAMCAT_OBJECT_STORE_ENDPOINT: ${CAMCAT_OBJECT_STORE_ENDPOINT:-http://minio:9000}
+  CAMCAT_OBJECT_STORE_PUBLIC_ENDPOINT: ${CAMCAT_OBJECT_STORE_PUBLIC_ENDPOINT:-http://localhost:9000}
+  CAMCAT_OBJECT_STORE_ACCESS_KEY: ${CAMCAT_OBJECT_STORE_ACCESS_KEY:-camcat}
+  CAMCAT_OBJECT_STORE_SECRET_KEY: ${CAMCAT_OBJECT_STORE_SECRET_KEY:?set CAMCAT_OBJECT_STORE_SECRET_KEY in .env}
+  CAMCAT_OBJECT_STORE_BUCKET: ${CAMCAT_OBJECT_STORE_BUCKET:-camcat}
+  CAMCAT_MILVUS_URI: ${CAMCAT_MILVUS_URI:-http://milvus:19530}
+  CAMCAT_MILVUS_TOKEN: ${CAMCAT_MILVUS_TOKEN:-}
+  CAMCAT_MILVUS_COLLECTION: ${CAMCAT_MILVUS_COLLECTION:-camcat_segments_v3}
+  CAMCAT_SECURITY_MODE: ${CAMCAT_SECURITY_MODE:-local-single-user}
+  CAMCAT_LOCAL_USER_ID: ${CAMCAT_LOCAL_USER_ID:-camcat-local-user}
+  CAMCAT_TRUSTED_PROXY_SECRET: ${CAMCAT_TRUSTED_PROXY_SECRET:-}
+  CAMCAT_LIBRARY_ADMIN_KEY: ${CAMCAT_LIBRARY_ADMIN_KEY:-}
+  CAMCAT_EMBEDDING_BASE_URL: ${CAMCAT_EMBEDDING_BASE_URL:?set real embedding endpoint in .env}
+  CAMCAT_EMBEDDING_API_KEY: ${CAMCAT_EMBEDDING_API_KEY:?set real embedding key in .env}
+  CAMCAT_EMBEDDING_MODEL: ${CAMCAT_EMBEDDING_MODEL:-Qwen/Qwen3-VL-Embedding-8B}
+  CAMCAT_EMBEDDING_DIMENSION: 2048
+  CAMCAT_RERANKER_BASE_URL: ${CAMCAT_RERANKER_BASE_URL:?set real reranker endpoint in .env}
+  CAMCAT_RERANKER_API_KEY: ${CAMCAT_RERANKER_API_KEY:?set real reranker key in .env}
+  CAMCAT_RERANKER_MODEL: ${CAMCAT_RERANKER_MODEL:-Qwen/Qwen3-VL-Reranker-8B}
+  CAMCAT_LLM_BASE_URL: ${CAMCAT_LLM_BASE_URL:?set real Qwen chat endpoint in .env}
+  CAMCAT_LLM_API_KEY: ${CAMCAT_LLM_API_KEY:?set real Qwen chat key in .env}
+  CAMCAT_LLM_MODEL: ${CAMCAT_LLM_MODEL:-qwen3-vl-plus}
+  CAMCAT_ASR_BASE_URL: ${CAMCAT_ASR_BASE_URL:?set real ASR endpoint in .env}
+  CAMCAT_ASR_API_KEY: ${CAMCAT_ASR_API_KEY:?set real ASR key in .env}
+  CAMCAT_ASR_MODEL: ${CAMCAT_ASR_MODEL:-qwen3-asr-flash}
+  CAMCAT_RUNTIME_DIR: /var/lib/camcat
+
+services:
+  postgres:
+    image: public.ecr.aws/docker/library/postgres:16.4-alpine
+    environment:
+      POSTGRES_DB: camcat
+      POSTGRES_USER: camcat
+      POSTGRES_PASSWORD: camcat
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U camcat -d camcat"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.25
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+      ETCD_SNAPSHOT_COUNT: "50000"
+    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls=http://0.0.0.0:2379 --data-dir=/etcd
+    volumes:
+      - etcd-data:/etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: minio server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: ${CAMCAT_OBJECT_STORE_ACCESS_KEY:-camcat}
+      MINIO_ROOT_PASSWORD: ${CAMCAT_OBJECT_STORE_SECRET_KEY:?set CAMCAT_OBJECT_STORE_SECRET_KEY in .env}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  milvus:
+    image: milvusdb/milvus:v2.6.20
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+      MINIO_ACCESS_KEY_ID: ${CAMCAT_OBJECT_STORE_ACCESS_KEY:-camcat}
+      MINIO_SECRET_ACCESS_KEY: ${CAMCAT_OBJECT_STORE_SECRET_KEY:?set CAMCAT_OBJECT_STORE_SECRET_KEY in .env}
+    ports:
+      - "19530:19530"
+      - "9091:9091"
+    volumes:
+      - milvus-data:/var/lib/milvus
+    depends_on:
+      etcd:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    command: ["alembic", "upgrade", "head"]
+    environment: *api-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    environment: *api-environment
+    ports:
+      - "8000:8000"
+    volumes:
+      - runtime-data:/var/lib/camcat
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      milvus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    command: ["python", "-m", "camcat.worker"]
+    environment:
+      <<: *api-environment
+      CAMCAT_WORKER_ID: compose-worker-1
+    volumes:
+      - runtime-data:/var/lib/camcat
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      milvus:
+        condition: service_healthy
+
+  integration-test:
+    profiles: ["test"]
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      args:
+        CAMCAT_INSTALL_DEV: "true"
+    command: ["pytest", "-q", "-m", "integration and not external", "tests/integration"]
+    environment: *api-environment
+    volumes:
+      - runtime-data:/var/lib/camcat
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      milvus:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        VITE_CAMCAT_API_BASE: ${VITE_CAMCAT_API_BASE-}
+        VITE_CAMCAT_USER_ID: ${VITE_CAMCAT_USER_ID:-camcat-local-user}
+    ports:
+      - "5173:80"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  etcd-data:
+  minio-data:
+  milvus-data:
+  runtime-data:
