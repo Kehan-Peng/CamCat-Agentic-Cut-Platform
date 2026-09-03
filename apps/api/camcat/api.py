@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
+from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, cast
@@ -21,7 +22,7 @@ from camcat.agent.scope import editing_retrieval_filters
 from camcat.config import Settings, get_settings
 from camcat.database import get_db
 from camcat.domain.state_patch import PatchConflict
-from camcat.editing.policies import expiry_for_upload, resolution_for_ratio
+from camcat.editing.policies import choose_aspect_ratio, expiry_for_upload, resolution_for_ratio
 from camcat.media.ffmpeg import MediaCommandError, probe
 from camcat.models import (
     Asset,
@@ -558,6 +559,9 @@ def _job_response(job: Job) -> JobResponse:
     result = dict(job.result) if job.result else None
     if result and result.get("output_key"):
         result["output_url"] = services.object_store.signed_url(str(result["output_key"]))
+        result["download_url"] = services.object_store.signed_download_url(
+            str(result["output_key"]), f"camcat-{job.id}.mp4"
+        )
     if result and result.get("subtitle_key"):
         result["subtitle_url"] = services.object_store.signed_url(str(result["subtitle_key"]))
     if result and result.get("source_media"):
@@ -583,6 +587,36 @@ def _job_response(job: Job) -> JobResponse:
         attempts=job.attempts,
         max_attempts=job.max_attempts,
         checkpoint=job.checkpoint or {},
+    )
+
+
+def _editing_session_response(
+    session: EditingSession, *, version: int, document: dict[str, Any]
+) -> EditingSessionResponse:
+    """Add short-lived playback URLs without persisting them in version history."""
+    state = deepcopy(document)
+    for media in state.get("source_media") or []:
+        storage_key = media.get("storage_key")
+        if storage_key:
+            media["playback_url"] = services.object_store.signed_url(
+                str(storage_key), expires_seconds=60 * 60
+            )
+    for segment in state.get("source_segments") or []:
+        storage_key = segment.get("storage_key")
+        thumbnail_key = segment.get("thumbnail_key")
+        if storage_key:
+            segment["source_video_url"] = services.object_store.signed_url(
+                str(storage_key), expires_seconds=60 * 60
+            )
+        if thumbnail_key:
+            segment["thumbnail_url"] = services.object_store.signed_url(
+                str(thumbnail_key), expires_seconds=60 * 60
+            )
+    return EditingSessionResponse(
+        editing_session_id=session.id,
+        state_version=version,
+        state=state,
+        updated_at=session.updated_at,
     )
 
 
@@ -747,12 +781,7 @@ def create_editing_session(
         transient_expires_at=transient_expires_at,
         project_id=request.project_id,
     )
-    return EditingSessionResponse(
-        editing_session_id=session.id,
-        state_version=state.version,
-        state=state.document,
-        updated_at=session.updated_at,
-    )
+    return _editing_session_response(session, version=state.version, document=state.document)
 
 
 @app.get("/api/v1/editing/sessions", response_model=PageResponse)
@@ -779,11 +808,8 @@ def list_editing_sessions(
     for session in page:
         _, state = repository.current(session.id, owner_id=owner_id)
         items.append(
-            EditingSessionResponse(
-                editing_session_id=session.id,
-                state_version=state.version,
-                state=state.document,
-                updated_at=session.updated_at,
+            _editing_session_response(
+                session, version=state.version, document=state.document
             ).model_dump(mode="json")
         )
     return PageResponse(items=items, next_cursor=next_cursor)
@@ -792,12 +818,7 @@ def list_editing_sessions(
 @app.get("/api/v1/editing/sessions/{session_id}", response_model=EditingSessionResponse)
 def get_editing_session(session_id: UUID, db: Db, owner_id: Owner) -> EditingSessionResponse:
     session, state = StateRepository(db).current(session_id, owner_id=owner_id)
-    return EditingSessionResponse(
-        editing_session_id=session.id,
-        state_version=state.version,
-        state=state.document,
-        updated_at=session.updated_at,
-    )
+    return _editing_session_response(session, version=state.version, document=state.document)
 
 
 @app.delete("/api/v1/editing/sessions/{session_id}", status_code=204)
@@ -912,12 +933,7 @@ def patch_editing_session(
     )
     session = db.get(EditingSession, session_id)
     assert session is not None
-    return EditingSessionResponse(
-        editing_session_id=session.id,
-        state_version=state.version,
-        state=state.document,
-        updated_at=session.updated_at,
-    )
+    return _editing_session_response(session, version=state.version, document=state.document)
 
 
 @app.post("/api/v1/editing/sessions/{session_id}/rollback", response_model=EditingSessionResponse)
@@ -932,12 +948,7 @@ def rollback_editing_session(
     )
     session = db.get(EditingSession, session_id)
     assert session is not None
-    return EditingSessionResponse(
-        editing_session_id=session.id,
-        state_version=state.version,
-        state=state.document,
-        updated_at=session.updated_at,
-    )
+    return _editing_session_response(session, version=state.version, document=state.document)
 
 
 @app.post("/api/v1/editing/sessions/{session_id}/agent", response_model=EditingSessionResponse)
@@ -981,11 +992,10 @@ def run_editing_agent(
         run.finished_at = utcnow()
         db.commit()
         db.refresh(session)
-        return EditingSessionResponse(
-            editing_session_id=session.id,
-            state_version=result["persisted_version"],
-            state=result["persisted_document"],
-            updated_at=session.updated_at,
+        return _editing_session_response(
+            session,
+            version=result["persisted_version"],
+            document=result["persisted_document"],
         )
     except Exception as exc:
         db.rollback()
@@ -1070,11 +1080,10 @@ def stream_editing_agent(
                 {
                     "graph_run_id": str(run.id),
                     "message": "剪辑计划已通过 State Patch 原子写入",
-                    "session": EditingSessionResponse(
-                        editing_session_id=session.id,
-                        state_version=final_state["persisted_version"],
-                        state=final_state["persisted_document"],
-                        updated_at=session.updated_at,
+                    "session": _editing_session_response(
+                        session,
+                        version=final_state["persisted_version"],
+                        document=final_state["persisted_document"],
                     ).model_dump(mode="json"),
                     "agent_run": _search_response(run, final_state, db).model_dump(mode="json"),
                 },
@@ -1108,6 +1117,15 @@ def render_editing_session(
         raise PatchConflict(expected_version=request.base_version, current_version=current.version)
     if not current.document.get("clips"):
         raise HTTPException(422, "剪辑计划没有片段，无法渲染")
+    configured_ratio = str(current.document.get("settings", {}).get("aspect_ratio", "16:9"))
+    if configured_ratio == "auto":
+        source_media = current.document.get("source_media") or []
+        first_source = source_media[0] if source_media else {}
+        configured_ratio = choose_aspect_ratio(
+            str(current.document.get("goal", "")),
+            int(first_source.get("width") or 0),
+            int(first_source.get("height") or 0),
+        )
     job = JobRepository(db).enqueue(
         owner_id=owner_id,
         kind=JobKind.RENDER,
@@ -1117,9 +1135,7 @@ def render_editing_session(
             "resolution": request.resolution
             or "x".join(
                 str(value)
-                for value in resolution_for_ratio(
-                    str(current.document.get("settings", {}).get("aspect_ratio", "16:9"))
-                )
+                for value in resolution_for_ratio(configured_ratio)
             ),
             "burn_subtitles": request.burn_subtitles,
         },

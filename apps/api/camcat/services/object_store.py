@@ -108,6 +108,21 @@ class ObjectStore:
             )
         )
 
+    def signed_download_url(
+        self, key: str, filename: str, expires_seconds: int = 3600
+    ) -> str:
+        return str(
+            self._public_client.generate_presigned_url(
+                "get_object",
+                Params={
+                    "Bucket": self.bucket,
+                    "Key": key,
+                    "ResponseContentDisposition": f'attachment; filename="{filename}"',
+                },
+                ExpiresIn=expires_seconds,
+            )
+        )
+
     def healthcheck(self) -> None:
         self._client.head_bucket(Bucket=self.bucket)
 

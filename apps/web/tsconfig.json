@@ -17,6 +17,6 @@
     "noEmit": true,
     "jsx": "react-jsx"
   },
-  "include": ["src", "CamCatWorkspacePage.tsx"],
+  "include": ["src", "CamCatApp.tsx", "CamCatWorkspacePage.tsx"],
   "references": []
 }
