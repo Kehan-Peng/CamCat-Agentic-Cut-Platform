@@ -75,7 +75,7 @@ CamCat 是一个可通过 Docker Compose 本地运行的多模态智能视频剪
 | --- | --- | --- |
 | `CAMCAT_BAILIAN_API_HOST` | 必需 | 百炼工作空间根地址，如 `https://<workspace>.cn-beijing.maas.aliyuncs.com` |
 | `CAMCAT_BAILIAN_API_KEY` | 必需 | 调用 Qwen embedding、reranker、VL 理解和 ASR |
-| `CAMCAT_PROVIDER_GATEWAY_API_KEY` | 必需，自己生成 | Compose 内 API/Worker 访问适配器的共享密钥，不是百炼 key |
+| `CAMCAT_PROVIDER_GATEWAY_API_KEY` | 本地单用户可选；多用户必需 | Compose 内 API/Worker 访问适配器的共享密钥，不是百炼 key。省略时仅本地单用户栈使用受限的内部默认值 |
 | `CAMCAT_OBJECT_STORE_PUBLIC_ENDPOINT` | 完整视频链路必需 | 百炼可访问的 HTTPS MinIO/S3 地址，用于短时签名视频 URL |
 | `PIXABAY_API_KEY` | 可选 | 按关键词搜索并导入 Pixabay 授权视频 |
 
@@ -98,13 +98,13 @@ CamCat 是一个可通过 Docker Compose 本地运行的多模态智能视频剪
 
 2. 在 `.env` 中填写百炼工作空间根地址。不要加 `/compatible-mode/v1` 或 `/api/v1`，适配器会根据模型选择路径。
 3. 新建一枚未曝光的百炼 API Key，写入 `CAMCAT_BAILIAN_API_KEY`。任何曾经粘贴到聊天、Issue、日志或截图中的 key 都应立即撤销并重新生成。
-4. 生成内部网关密钥：
+4. 本地单用户开发可跳过 `CAMCAT_PROVIDER_GATEWAY_API_KEY` 及四个内部 `*_API_KEY`；它们会在仅限 Compose 私网的适配器中使用同一个本地默认值。若启用 `multi-user`，必须生成内部网关密钥：
 
    ```bash
    openssl rand -hex 32
    ```
 
-   将结果写入 `CAMCAT_PROVIDER_GATEWAY_API_KEY`、`CAMCAT_EMBEDDING_API_KEY`、`CAMCAT_RERANKER_API_KEY`、`CAMCAT_LLM_API_KEY` 和 `CAMCAT_ASR_API_KEY`。
+   将结果写入 `CAMCAT_PROVIDER_GATEWAY_API_KEY`；其余四个内部 `*_API_KEY` 留空即可继承它。
 5. 如果要调用百炼视频 embedding/理解，将 MinIO 通过受控 HTTPS 反向代理或隧道暴露，并把公网根地址写入 `CAMCAT_OBJECT_STORE_PUBLIC_ENDPOINT`。只暴露对象端点，不要暴露 MinIO Console。
 
 请勿把 `.env`、API Key、MinIO 密码或签名 URL 提交到 Git。
@@ -163,7 +163,15 @@ docker compose exec -e PIXABAY_API_KEY="$PIXABAY_API_KEY" api \
 - `local-single-user`：默认开源演示模式。服务器忽略浏览器伪造的 `X-User-Id`，所有数据绑定到 `CAMCAT_LOCAL_USER_ID`。
 - `multi-user`：只信任经过身份验证的反向代理头，必须配置 `CAMCAT_TRUSTED_PROXY_SECRET` 和 `CAMCAT_LIBRARY_ADMIN_KEY`。生产部署还应使用 TLS、私有网络、独立数据库凭据和集中密钥管理。
 
+`multi-user` 还必须配置非默认的 `CAMCAT_PROVIDER_GATEWAY_API_KEY`。默认 gateway 端口只绑定到 `127.0.0.1`；不要把它暴露到公网。
+
+`camcat_segments_v7` 是当前 Milvus collection。它与旧 collection 不兼容时会新建索引而不删除旧数据；若要保留既有素材，请用新的 v7 collection 重新执行授权素材摄取。
+
 Nginx 已配置 CSP、`nosniff`、Referrer Policy、Permissions Policy、请求体上限、API 限流和同源代理。上传还会执行 MIME、文件大小、用户配额和 ffprobe 校验。
+
+### 百炼连接错误
+
+若 UI 显示 `Bailian transport failure: ConnectError` 或 502，通常表示 gateway 到百炼工作空间的 DNS/网络连接失败，而非剪辑本身失败。确认 `CAMCAT_BAILIAN_API_HOST` 是工作空间根地址（不要附加 `/compatible-mode/v1` 或 `/api/v1`）、API Key 已轮换且有效，然后重启 `api`、`worker` 和 `provider-gateway`。`~/.bailian/config.json` 不会自动注入 Docker Compose，仍需要在项目 `.env` 中配置这两个百炼变量。
 
 ## 开发与验证
 

@@ -25,7 +25,7 @@ def test_semantic_metadata_schema_uses_a_new_collection_namespace(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("CAMCAT_MILVUS_COLLECTION", raising=False)
-    assert _settings().milvus_collection == "camcat_segments_v6"
+    assert _settings().milvus_collection == "camcat_segments_v7"
 
 
 def test_upsert_rejects_rows_without_license_source_and_semantics() -> None:

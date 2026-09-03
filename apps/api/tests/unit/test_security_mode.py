@@ -81,7 +81,11 @@ def test_integration_mode_can_boot_without_contacting_external_providers() -> No
     assert settings.environment == "test"
 
 
-def test_managed_bailian_gateway_requires_its_runtime_credentials() -> None:
+def test_managed_bailian_gateway_requires_its_runtime_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CAMCAT_BAILIAN_API_HOST", raising=False)
+    monkeypatch.delenv("CAMCAT_BAILIAN_API_KEY", raising=False)
     common = {
         "_env_file": None,
         "environment": "development",
@@ -105,10 +109,66 @@ def test_managed_bailian_gateway_requires_its_runtime_credentials() -> None:
             bailian_api_key="change-me",
         )
 
+    with pytest.raises(ValidationError, match="placeholder Bailian gateway configuration"):
+        Settings(
+            **common,
+            provider_gateway_api_key="gateway-secret",
+            bailian_api_host="https://workspace.example",
+            bailian_api_key="rotated-bailian-key",
+        )
+
     settings = Settings(
         **common,
         provider_gateway_api_key="gateway-secret",
-        bailian_api_host="https://workspace.example",
+        bailian_api_host="https://workspace.cn-beijing.maas.aliyuncs.com",
         bailian_api_key="rotated-bailian-key",
     )
-    assert settings.bailian_api_host == "https://workspace.example"
+    assert settings.bailian_api_host == "https://workspace.cn-beijing.maas.aliyuncs.com"
+
+
+def test_multi_user_mode_rejects_the_local_gateway_default() -> None:
+    with pytest.raises(ValidationError, match="private CAMCAT_PROVIDER_GATEWAY_API_KEY"):
+        Settings(
+            _env_file=None,
+            environment="development",
+            security_mode="multi-user",
+            trusted_proxy_secret="proxy-secret",
+            library_admin_key="admin-secret",
+            embedding_base_url="http://provider-gateway:8010",
+            embedding_api_key="camcat-local-gateway",
+            reranker_base_url="http://provider-gateway:8010",
+            reranker_api_key="camcat-local-gateway",
+            llm_base_url="http://provider-gateway:8010",
+            llm_api_key="camcat-local-gateway",
+            asr_base_url="http://provider-gateway:8010",
+            asr_api_key="camcat-local-gateway",
+            provider_gateway_api_key="camcat-local-gateway",
+            bailian_api_host="https://workspace.cn-beijing.maas.aliyuncs.com",
+            bailian_api_key="rotated-bailian-key",
+        )
+
+
+def test_local_mode_fills_internal_gateway_defaults_for_development_commands() -> None:
+    settings = Settings(
+        _env_file=None,
+        environment="development",
+        embedding_base_url="http://provider-gateway:8010",
+        embedding_api_key="",
+        reranker_base_url="http://provider-gateway:8010",
+        reranker_api_key="",
+        llm_base_url="http://provider-gateway:8010",
+        llm_api_key="",
+        asr_base_url="http://provider-gateway:8010",
+        asr_api_key="",
+        provider_gateway_api_key="",
+        bailian_api_host="https://workspace.cn-beijing.maas.aliyuncs.com",
+        bailian_api_key="rotated-bailian-key",
+    )
+
+    assert settings.provider_gateway_api_key.get_secret_value() == "camcat-local-gateway"
+    assert {
+        settings.embedding_api_key.get_secret_value(),
+        settings.reranker_api_key.get_secret_value(),
+        settings.llm_api_key.get_secret_value(),
+        settings.asr_api_key.get_secret_value(),
+    } == {"camcat-local-gateway"}

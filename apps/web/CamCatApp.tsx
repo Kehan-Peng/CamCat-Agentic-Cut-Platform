@@ -138,25 +138,24 @@ function ProjectHomePage({
   children: React.ReactNode;
 }) {
   return (
-    <div className="h-screen overflow-hidden bg-[radial-gradient(circle_at_55%_-15%,#131920_0%,#060708_38%,#030404_100%)] text-[#cbd2d8]">
-      <div className="grid h-full w-full max-w-[1540px] grid-cols-[112px_minmax(0,1fr)] gap-5 p-6">
-        <ProjectRail onNavigate={onNavigateProduct} disabled={!projects.length} />
-        <main className="flex min-h-0 flex-col overflow-hidden rounded-[22px] border border-[#2a2e32] bg-[#08090a]/95 shadow-[0_35px_120px_rgba(0,0,0,0.42)]">
-          <header className="flex h-[112px] shrink-0 items-center justify-between border-b border-[#23272b] px-10">
-            <div className="flex items-center gap-4 text-white">
-              <CamCatMark className="h-11 w-11" />
-              <div>
-                <div className="text-[30px] font-black leading-none">CamCat</div>
-                <div className="mt-2 text-[10px] font-semibold tracking-[0.24em] text-[#69737d]">MULTIMODAL VIDEO STUDIO</div>
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <button type="button" onClick={onRefresh} aria-label="刷新项目" className="grid h-12 w-12 place-items-center rounded-[13px] border border-[#2d3237] bg-[#111315] text-[#aab2ba] hover:bg-[#181a1d] hover:text-white"><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /></button>
-              <button type="button" onClick={onCreate} className="inline-flex h-12 items-center gap-2 rounded-[13px] border border-[#34393e] bg-[linear-gradient(180deg,#202327,#151719)] px-6 text-[14px] font-semibold text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] hover:border-[#4a5158]"><Plus className="h-5 w-5" />新建项目</button>
-            </div>
-          </header>
-
-          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-10 py-8 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+    <div className="h-screen overflow-hidden bg-[#030404] text-[#cbd2d8]">
+      <div className="flex h-full w-full max-w-[1540px] flex-col bg-[radial-gradient(circle_at_55%_-15%,#131920_0%,#060708_38%,#030404_100%)]">
+        <header data-testid="app-header" className="grid h-[72px] shrink-0 grid-cols-[minmax(360px,1fr)_420px_minmax(360px,1fr)] items-center border-b border-[#1b1d1f] bg-[#050606] px-5">
+          <div className="flex min-w-0 items-center gap-3 text-white">
+            <CamCatMark className="h-8 w-8" />
+            <span className="text-[26px] font-black leading-none">CamCat</span>
+            <span className="h-5 w-px bg-[#25282b]" />
+            <span className="text-[12px] text-[#d7dde2]">项目列表</span>
+          </div>
+          <div className="text-center"><div className="text-[11px] text-[#737b84]">Workspace</div><div className="mt-1 text-[12px] font-medium text-white">项目 / 项目列表</div></div>
+          <div className="flex items-center justify-end gap-3">
+            <button type="button" onClick={onRefresh} aria-label="刷新项目" className="grid h-9 w-9 place-items-center rounded-[10px] border border-[#2d3237] bg-[#111315] text-[#aab2ba] hover:bg-[#181a1d] hover:text-white"><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /></button>
+            <button type="button" onClick={onCreate} className="inline-flex h-9 items-center gap-2 rounded-[10px] border border-[#34393e] bg-[linear-gradient(180deg,#202327,#151719)] px-4 text-[12px] font-semibold text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] hover:border-[#4a5158]"><Plus className="h-4 w-4" />新建项目</button>
+          </div>
+        </header>
+        <div data-testid="project-layout" className="grid min-h-0 flex-1" style={{ gridTemplateColumns: "96px minmax(0, 1fr)" }}>
+          <ProjectRail onNavigate={onNavigateProduct} disabled={!projects.length} />
+          <main data-testid="project-content" className="min-h-0 overflow-y-auto border-r border-[#1b1d1f] bg-[#08090a]/95 px-10 py-8 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             <div className="flex items-end justify-between">
               <div><div className="text-[11px] font-semibold tracking-[0.24em] text-[#68727c]">PROJECTS</div><h1 className="mt-2 text-[28px] font-semibold text-white">项目首页 / 工作区列表</h1></div>
               <div className="font-mono text-[11px] text-[#68727c]">{projects.length} projects · {projects.reduce((sum, project) => sum + project.sessions.length, 0)} sessions</div>
@@ -172,8 +171,8 @@ function ProjectHomePage({
             <div className="mt-7 space-y-4">
               {projects.map((project, index) => <ProjectCard key={project.project_id} project={project} index={index} onOpen={onOpen} onDeleteSession={onDeleteSession} />)}
             </div>
-          </div>
-        </main>
+          </main>
+        </div>
       </div>
       {children}
     </div>
@@ -184,20 +183,43 @@ function ProjectCard({ project, index, onOpen, onDeleteSession }: { project: Pro
   const [expanded, setExpanded] = useState(false);
   const latest = [...project.sessions].sort((a, b) => Date.parse(b.updated_at ?? "") - Date.parse(a.updated_at ?? ""))[0];
   const clipCount = latest?.state.clips?.length ?? 0;
+  const previewUrl = latest?.state.source_media?.[0]?.playback_url;
   const gradient = ["from-[#1d2730] via-[#101d22] to-[#171416]", "from-[#1a2631] via-[#10151d] to-[#172018]", "from-[#241c2b] via-[#14151c] to-[#111e22]"][index % 3];
   return (
     <article className="overflow-hidden rounded-[18px] border border-[#262b2f] bg-[linear-gradient(105deg,rgba(24,26,28,0.96),rgba(12,13,14,0.96))] shadow-[0_18px_50px_rgba(0,0,0,0.24)]">
-      <div className="flex min-h-[150px] items-center gap-7 px-6 py-5">
-        <button type="button" onClick={() => onOpen(project, latest)} className={`grid h-[108px] w-[164px] shrink-0 place-items-center overflow-hidden rounded-[14px] border border-white/10 bg-gradient-to-br ${gradient}`} aria-label={`打开项目 ${project.name}`}><CamCatMark className="h-12 w-12 text-white/70" /></button>
-        <button type="button" onClick={() => onOpen(project, latest)} className="min-w-0 flex-1 text-left">
-          <div className="flex items-center gap-3"><h2 className="truncate text-[22px] font-semibold text-white">{project.name}</h2><span className={`rounded-[7px] border px-2.5 py-1 text-[10px] font-medium ${latest ? "border-[#246048] bg-[#0c241b] text-[#62dda9]" : "border-[#3c4650] bg-[#15191d] text-[#93a0ab]"}`}><span className={`mr-1.5 inline-block h-1.5 w-1.5 rounded-full ${latest ? "bg-[#34d399]" : "bg-[#77818b]"}`} />{latest ? "Editing ready" : "New project"}</span></div>
-          <div className="mt-4 grid grid-cols-2 gap-x-12 gap-y-2 text-[13px] text-[#858f99]"><span>创建：{formatProjectDate(project.created_at)}</span><span>剪辑会话：{project.sessions.length}</span><span>状态版本：v{latest?.state_version ?? 1}</span><span>计划片段：{clipCount}</span></div>
+      <div className="grid min-h-[142px] grid-cols-[112px_minmax(0,1fr)_36px] items-center gap-4 px-4 py-4 lg:grid-cols-[156px_minmax(0,1fr)_220px_40px] lg:gap-7 lg:px-5 lg:py-5">
+        <button type="button" onClick={() => onOpen(project, latest)} className={`relative grid h-[96px] w-[112px] place-items-center overflow-hidden rounded-[14px] border border-white/10 bg-gradient-to-br lg:h-[120px] lg:w-[156px] ${gradient}`} aria-label={`打开项目 ${project.name}`}>
+          {previewUrl ? (
+            <video src={previewUrl} muted playsInline preload="metadata" aria-hidden="true" className="pointer-events-none absolute inset-0 h-full w-full object-cover" />
+          ) : (
+            <CamCatMark className="h-11 w-11 text-white/70" />
+          )}
+          <span className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/30 via-transparent to-white/[0.03]" />
         </button>
-        <button type="button" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded} aria-label={`展开 ${project.name} 会话`} className="grid h-12 w-12 place-items-center rounded-[12px] text-[#9aa3ac] hover:bg-white/[0.05] hover:text-white">{expanded ? <ChevronDown className="h-6 w-6" /> : <ChevronRight className="h-6 w-6" />}</button>
+        <button data-testid="project-card-summary" type="button" onClick={() => onOpen(project, latest)} className="min-w-0 self-stretch py-1 text-left lg:py-2">
+          <div className="flex min-w-0 items-center gap-3">
+            <h2 className="truncate text-[17px] font-semibold text-white sm:text-[20px] lg:text-[22px]">{project.name}</h2>
+            <ProjectStatusBadge ready={Boolean(latest)} className="hidden sm:inline-flex lg:hidden" />
+          </div>
+          <div className="mt-3 space-y-1.5 text-[12px] text-[#858f99] sm:text-[13px] lg:mt-4">
+            <div className="truncate">创建：{formatProjectDate(project.created_at)}</div>
+            <div>剪辑会话：{project.sessions.length}</div>
+            <div className="flex gap-4 lg:hidden"><span>状态：v{latest?.state_version ?? 1}</span><span>片段：{clipCount}</span></div>
+          </div>
+        </button>
+        <div className="hidden self-stretch flex-col justify-center gap-4 lg:flex">
+          <ProjectStatusBadge ready={Boolean(latest)} />
+          <div className="space-y-1.5 text-[13px] text-[#858f99]"><div>状态版本：v{latest?.state_version ?? 1}</div><div>计划片段：{clipCount}</div></div>
+        </div>
+        <button type="button" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded} aria-label={`展开 ${project.name} 会话`} className="grid h-10 w-9 place-items-center rounded-[10px] text-[#9aa3ac] hover:bg-white/[0.05] hover:text-white">{expanded ? <ChevronDown className="h-6 w-6" /> : <ChevronRight className="h-6 w-6" />}</button>
       </div>
       {expanded && <div className="border-t border-[#23272b] bg-[#0b0c0d] px-6 py-4"><div className="mb-3 flex items-center justify-between"><span className="text-[10px] font-semibold tracking-[0.18em] text-[#68727c]">EDITING SESSIONS</span><button type="button" onClick={() => onOpen(project)} className="inline-flex items-center gap-1.5 rounded-[9px] border border-[#30353a] px-3 py-2 text-[11px] text-white"><Plus className="h-3.5 w-3.5" />新建剪辑</button></div>{project.sessions.length ? <div className="space-y-2">{project.sessions.map((session) => <div key={session.editing_session_id} className="flex items-center gap-3 rounded-[11px] border border-[#22262a] bg-[#111315] px-4 py-3"><button type="button" onClick={() => onOpen(project, session)} className="min-w-0 flex-1 text-left"><div className="truncate text-[12px] font-medium text-white">{session.state.title ?? session.state.goal ?? `剪辑会话 ${session.editing_session_id.slice(0, 8)}`}</div><div className="mt-1 font-mono text-[10px] text-[#707983]">v{session.state_version} · {formatProjectDate(session.updated_at)}</div></button><button type="button" onClick={() => onDeleteSession(project.project_id, session.editing_session_id)} aria-label={`删除剪辑会话 ${session.editing_session_id}`} className="grid h-8 w-8 place-items-center rounded-[8px] text-[#7f8993] hover:bg-[#2a1010] hover:text-[#fca5a5]"><Trash2 className="h-4 w-4" /></button></div>)}</div> : <div className="py-5 text-center text-[12px] text-[#68727c]">该项目尚无剪辑会话</div>}</div>}
     </article>
   );
+}
+
+function ProjectStatusBadge({ ready, className = "" }: { ready: boolean; className?: string }) {
+  return <span className={`w-fit items-center whitespace-nowrap rounded-[7px] border px-2.5 py-1 text-[10px] font-medium ${ready ? "border-[#246048] bg-[#0c241b] text-[#62dda9]" : "border-[#3c4650] bg-[#15191d] text-[#93a0ab]"} ${className || "inline-flex"}`}><span className={`mr-1.5 inline-block h-1.5 w-1.5 rounded-full ${ready ? "bg-[#34d399]" : "bg-[#77818b]"}`} />{ready ? "Editing ready" : "New project"}</span>;
 }
 
 function ProjectRail({ onNavigate, disabled }: { onNavigate: (page: ProductPage) => void; disabled: boolean }) {
@@ -207,7 +229,7 @@ function ProjectRail({ onNavigate, disabled }: { onNavigate: (page: ProductPage)
     { icon: Scissors, label: "编辑计划", page: "editing" as const },
     { icon: Download, label: "导出渲染", page: "render" as const },
   ];
-  return <aside className="flex flex-col items-center justify-between rounded-[22px] border border-[#2a2e32] bg-[#090a0b]/95 py-6"><nav className="space-y-3">{items.map(({ icon: Icon, label, active, page }) => <button type="button" key={label} onClick={() => page && onNavigate(page)} disabled={!active && disabled} aria-label={label} aria-current={active ? "page" : undefined} title={label} className={`flex h-16 w-16 flex-col items-center justify-center gap-1 rounded-[14px] border text-[9px] ${active ? "border-[#2b3035] bg-[#17191c] text-white shadow-[0_10px_28px_rgba(0,0,0,0.3)]" : "border-transparent text-[#9099a2] hover:bg-[#121416] hover:text-white disabled:cursor-not-allowed disabled:opacity-35"}`}><Icon className="h-5 w-5" /><span>{label}</span></button>)}</nav><div className="grid h-16 w-16 place-items-center rounded-[17px] border border-[#2a2e32] bg-[#111315]"><CamCatMark className="h-9 w-9" /></div></aside>;
+  return <aside data-testid="product-navigation" className="flex min-h-0 flex-col items-center justify-between border-r border-[#1b1d1f] bg-[#050606] py-4"><nav className="w-full space-y-2 px-2.5">{items.map(({ icon: Icon, label, active, page }) => <button type="button" key={label} onClick={() => page && onNavigate(page)} disabled={!active && disabled} aria-label={label} aria-current={active ? "page" : undefined} title={label} className={`flex h-16 w-full flex-col items-center justify-center gap-1 rounded-[10px] border text-[9px] ${active ? "border-[#2b3035] bg-[#17191c] text-white shadow-[0_10px_28px_rgba(0,0,0,0.3)]" : "border-transparent text-[#9099a2] hover:bg-[#121416] hover:text-white disabled:cursor-not-allowed disabled:opacity-35"}`}><Icon className="h-5 w-5" /><span>{label}</span></button>)}</nav><div className="grid h-12 w-12 place-items-center rounded-[12px] border border-[#2a2e32] bg-[#111315]"><CamCatMark className="h-7 w-7" /></div></aside>;
 }
 
 function CreateProjectDialog({ onClose, onCreate }: { onClose: () => void; onCreate: (name: string) => Promise<void> }) {
