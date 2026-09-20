@@ -20,12 +20,10 @@ pending` until a person opens, plays, saves, and cold-reopens the draft.
 
 ## Timeline conversion
 
-The native plan uses absolute source paths from the already verified build, integer
-microseconds, and one of the supported integer frame rates. CamCat's overlapping dissolve
-timeline is converted without changing final duration: the following native segment consumes
-its compiled incoming-overlap frames as source head handle, while the preceding segment owns a
-centered dissolve transition. Odd-frame dissolves fail because the native transition contract
-requires a centered even-frame span.
+The native plan combines the persistent build with separately supplied, fingerprint-verified
+runtime materializations. Machine-local paths are never persisted in the build. It uses integer
+microseconds and one of the supported integer frame rates. V2 dissolve edges preserve semantic
+duration and use the compiler's validated source handles.
 
 Source-bound subtitles become editable text-track segments. BGM, ambient, and SFX cues become
 audio tracks; overlapping cues are allocated to separate lanes. Explicit loop intent becomes
@@ -43,6 +41,7 @@ PYTHONPATH=apps/api python scripts/build_jianying_draft.py \
   --build /absolute/path/to/build \
   --out /absolute/path/to/new-output \
   --name "CamCat Editable" \
+  --source source-id=/absolute/path/to/source.mp4 \
   --command-json '["python3","/absolute/path/to/local/headless_draft.py"]'
 ```
 
@@ -50,5 +49,4 @@ The output contains `jianying-plan.json`, the verified `native-build/`,
 `verify-report.json`, and `adapter-manifest.json`. The adapter manifest binds the native files
 to both the CamCat compiled-timeline hash and render-build hash.
 
-The real integration test is enabled only when macOS, FFmpeg/FFprobe, and
-`CAMCAT_JIANYING_COMMAND_JSON` are available. A skipped test is not native acceptance evidence.
+Native UI acceptance remains future work and is not part of the V2 migration acceptance run.

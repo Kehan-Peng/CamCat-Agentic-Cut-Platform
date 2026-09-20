@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import platform
 import shutil
 import subprocess
 import tempfile
@@ -13,13 +14,15 @@ class CapabilityError(RuntimeError):
     pass
 
 
-class CapabilityProfile(BaseModel):
+class RendererCapabilityProfile(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     ffmpeg_version: str
     ffprobe_version: str
     encoders: list[str]
     filters: list[str]
+    platform: str
+    renderer_implementation_version: str
     runtime_directory_writable: bool
     object_store_reachable: bool | None
 
@@ -28,7 +31,8 @@ def inspect_capabilities(
     runtime_directory: Path,
     *,
     object_store_healthcheck: Callable[[], None] | None = None,
-) -> CapabilityProfile:
+    renderer_implementation_version: str = "camcat-ffmpeg-renderer/v2",
+) -> RendererCapabilityProfile:
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
         raise CapabilityError("FFmpeg and FFprobe are required")
     ffmpeg_version = _first_line(["ffmpeg", "-version"])
@@ -36,7 +40,7 @@ def inspect_capabilities(
     encoders_output = _run(["ffmpeg", "-hide_banner", "-encoders"])
     filters_output = _run(["ffmpeg", "-hide_banner", "-filters"])
     required_encoders = ["libx264", "aac"]
-    required_filters = ["subtitles", "xfade", "acrossfade", "eq", "loudnorm", "amix"]
+    required_filters = ["ass", "overlay", "xfade", "eq", "loudnorm", "amix"]
     encoders = [item for item in required_encoders if item in encoders_output]
     filters = [item for item in required_filters if item in filters_output]
     missing = sorted(set(required_encoders) - set(encoders)) + sorted(
@@ -56,11 +60,13 @@ def inspect_capabilities(
     if object_store_healthcheck is not None:
         object_store_healthcheck()
         reachable = True
-    return CapabilityProfile(
+    return RendererCapabilityProfile(
         ffmpeg_version=ffmpeg_version,
         ffprobe_version=ffprobe_version,
         encoders=encoders,
         filters=filters,
+        platform=platform.platform(),
+        renderer_implementation_version=renderer_implementation_version,
         runtime_directory_writable=writable,
         object_store_reachable=reachable,
     )

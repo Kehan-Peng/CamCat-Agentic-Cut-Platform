@@ -62,7 +62,7 @@ def test_structured_content_normalizes_top_level_model_array() -> None:
 
 
 def test_structured_content_removes_markdown_json_fence() -> None:
-    assert parse_structured_content('```json\n{"clips":[]}\n```') == {"clips": []}
+    assert parse_structured_content('```json\n{"commands":[]}\n```') == {"commands": []}
 
 
 def test_structured_content_normalizes_only_escaped_whitespace_outside_strings():

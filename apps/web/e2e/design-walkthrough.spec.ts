@@ -23,6 +23,15 @@ test.describe("CamCat design walkthrough", () => {
     expect(contentBox!.x).toBeGreaterThanOrEqual(railBox!.x + railBox!.width);
     expect(contentBox!.y).toBeCloseTo(railBox!.y, 0);
 
+    const openProject = page.locator('button[aria-label^="打开项目 "]').first();
+    if (!(await openProject.count())) {
+      await page.getByRole("button", { name: "新建项目" }).click();
+      await page.getByLabel("项目名称").fill(`布局走查 ${Date.now()}`);
+      await page.getByRole("button", { name: "创建并打开" }).click();
+      await page.getByRole("button", { name: "返回项目列表" }).click();
+      await expect(openProject).toBeVisible();
+    }
+
     const firstCard = page.locator("article").first();
     const thumbnailBox = await firstCard.locator('button[aria-label^="打开项目 "]').boundingBox();
     const summaryBox = await firstCard.locator("button").nth(1).boundingBox();
@@ -31,14 +40,7 @@ test.describe("CamCat design walkthrough", () => {
     expect(thumbnailBox!.width).toBeGreaterThanOrEqual(150);
     expect(summaryBox!.x).toBeGreaterThanOrEqual(thumbnailBox!.x + thumbnailBox!.width);
 
-    const openProject = page.locator('button[aria-label^="打开项目 "]').first();
-    if (await openProject.count()) {
-      await openProject.click();
-    } else {
-      await page.getByRole("button", { name: "新建项目" }).click();
-      await page.getByLabel("项目名称").fill(`布局走查 ${Date.now()}`);
-      await page.getByRole("button", { name: "创建并打开" }).click();
-    }
+    await openProject.click();
 
     const editorHeader = page.getByTestId("app-header");
     const editorRail = page.getByTestId("product-navigation");

@@ -1,284 +1,250 @@
 from __future__ import annotations
 
+from pathlib import Path
 from uuid import UUID
 
 import pytest
-from camcat.timeline.compiler import TimelineCompiler
-from camcat.timeline.mapping import ProjectionPolicy, SourceTimeMapper
-from camcat.timeline.schemas import MediaFingerprint, RenderProfile
-from camcat.timeline.validator import TimelineValidationError, verify_compiled_timeline
+from camcat.domain.project import (
+    AudioSegment,
+    AudioTrack,
+    Canvas,
+    EditingProjectV2,
+    MediaSourceRef,
+    TextSegment,
+    TextTrack,
+    TimelineV2,
+    Transform,
+    TransitionEdge,
+    VideoSegment,
+    VideoTrack,
+)
+from camcat.rendering.materialization import MaterializedMedia
+from camcat.timeline.compiler import TimelineCompilerV2
+from camcat.timeline.mapping import SourceTimeMapper
+from camcat.timeline.schemas import BuildMediaRef, RenderProfile
+from camcat.timeline.validator import TimelineValidationError
 
-SESSION_ID = UUID("00000000-0000-0000-0000-000000000001")
+SESSION = UUID("00000000-0000-0000-0000-000000000001")
 
 
-def fingerprint(source_id: str, *, duration_us: int = 10_000_000) -> MediaFingerprint:
-    return MediaFingerprint(
-        media_id=source_id,
-        storage_key=f"sources/{source_id}.mp4",
-        local_path=f"/tmp/{source_id}.mp4",
-        sha256="a" * 64,
-        file_size=100,
-        duration_us=duration_us,
-        width=1920,
-        height=1080,
-        video_codec="h264",
-        audio_codec="aac",
+def media(source_id: str, *, duration_us: int = 10_000_000, audio: bool = True):
+    return MaterializedMedia(
+        ref=BuildMediaRef(
+            media_id=source_id,
+            storage_key=f"library/{source_id}",
+            sha256=(source_id[0] if source_id[0] in "abcdef" else "a") * 64,
+            size=100,
+            duration_us=duration_us,
+            width=640,
+            height=360,
+            video_codec="h264" if source_id != "music" else None,
+            audio_codec="aac" if audio else None,
+            retention_class="library",
+        ),
+        local_path=Path(f"/tmp/{source_id}"),
     )
 
 
-def document(*clips: dict[str, object]) -> dict[str, object]:
-    return {
-        "clips": list(clips),
-        "subtitles": [],
-        "audio_plan": {"bgm": [], "ambient": [], "sound_effects": []},
-    }
-
-
-def clip(
-    clip_id: str,
-    source_id: str,
-    start: float,
-    end: float,
-    **extra: object,
-) -> dict[str, object]:
-    return {
-        "clip_id": clip_id,
-        "segment_id": f"segment-{clip_id}",
-        "origin": "source",
-        "media_id": source_id,
-        "source_start": start,
-        "source_end": end,
-        "reason": "test",
-        "transition": "cut",
-        **extra,
-    }
-
-
-def test_single_and_multi_clip_are_frame_aligned_and_deterministic() -> None:
-    profile = RenderProfile(width=1920, height=1080, fps_num=30, fps_den=1)
-    state = document(clip("a", "one", 0.0, 1.01), clip("b", "two", 2.0, 3.0))
-    compiler = TimelineCompiler(profile)
-
-    first = compiler.compile(
-        session_id=SESSION_ID,
-        state_version=4,
-        document=state,
-        sources={"one": fingerprint("one"), "two": fingerprint("two")},
+def project(*, fps_num: int = 30, fps_den: int = 1, transition: bool = False):
+    edges = (
+        [
+            TransitionEdge(
+                transition_id="edge",
+                left_segment_id="v1",
+                right_segment_id="v2",
+                type="dissolve",
+                duration_us=400_000,
+            )
+        ]
+        if transition
+        else []
     )
-    second = compiler.compile(
-        session_id=SESSION_ID,
-        state_version=4,
-        document=state,
-        sources={"one": fingerprint("one"), "two": fingerprint("two")},
-    )
-
-    segments = first.video_tracks[0].segments
-    assert [(item.target_start_frame, item.target_duration_frames) for item in segments] == [
-        (0, 30),
-        (30, 30),
-    ]
-    assert first.frame_count == 60
-    assert first.duration_us == 2_000_000
-    assert first.compiled_hash == second.compiled_hash
-    verify_compiled_timeline(first)
-
-
-def test_speed_changes_target_frame_duration() -> None:
-    timeline = TimelineCompiler(RenderProfile(width=1280, height=720, fps_num=25)).compile(
-        session_id=SESSION_ID,
-        state_version=1,
-        document=document(clip("a", "one", 1.0, 5.0, speed=2.0)),
-        sources={"one": fingerprint("one")},
-    )
-    segment = timeline.video_tracks[0].segments[0]
-    assert segment.source_start_us == 1_000_000
-    assert segment.source_duration_us == 4_000_000
-    assert segment.target_duration_frames == 50
-    assert timeline.duration_us == 2_000_000
-
-
-def test_source_subtitle_and_audio_cue_project_after_trim_and_reorder() -> None:
-    state = document(clip("b", "two", 5.0, 7.0), clip("a", "one", 1.0, 3.0))
-    state["subtitles"] = [
-        {
-            "subtitle_id": "s1",
-            "text": "mapped",
-            "clip_id": "a",
-            "source_id": "one",
-            "source_start": 1.5,
-            "source_end": 2.0,
-            "style": "default",
-        }
-    ]
-    state["audio_plan"] = {
-        "bgm": [],
-        "ambient": [],
-        "sound_effects": [
-            {
-                "cue_id": "fx1",
-                "media_id": "fx",
-                "source_time": 1.25,
-                "timeline_source_id": "one",
-                "duration": 0.25,
-                "volume": 0.5,
-            }
+    return EditingProjectV2(
+        project_id="p",
+        goal="g",
+        title="t",
+        canvas=Canvas(width=640, height=360, fps_num=fps_num, fps_den=fps_den),
+        sources=[
+            MediaSourceRef(
+                source_id="first",
+                origin="licensed_library",
+                storage_key="library/first",
+                retention_class="library",
+            ),
+            MediaSourceRef(
+                source_id="second",
+                origin="licensed_library",
+                storage_key="library/second",
+                retention_class="library",
+            ),
+            MediaSourceRef(
+                source_id="music",
+                origin="licensed_library",
+                storage_key="library/music",
+                retention_class="library",
+            ),
         ],
-    }
-    timeline = TimelineCompiler(RenderProfile(width=1280, height=720, fps_num=30)).compile(
-        session_id=SESSION_ID,
-        state_version=1,
-        document=state,
-        sources={
-            "one": fingerprint("one"),
-            "two": fingerprint("two"),
-            "fx": fingerprint("fx", duration_us=1_000_000),
-        },
+        timeline=TimelineV2(
+            tracks=[
+                VideoTrack(
+                    track_id="main",
+                    name="Main",
+                    segments=[
+                        VideoSegment(
+                            segment_id="v1",
+                            source_id="first",
+                            timeline_start_us=0,
+                            timeline_duration_us=2_000_000,
+                            source_start_us=1_000_000,
+                            source_duration_us=2_000_000,
+                        ),
+                        VideoSegment(
+                            segment_id="v2",
+                            source_id="second",
+                            timeline_start_us=2_000_000,
+                            timeline_duration_us=2_000_000,
+                            source_start_us=1_000_000,
+                            source_duration_us=2_000_000,
+                        ),
+                    ],
+                ),
+                VideoTrack(
+                    track_id="overlay",
+                    name="Overlay",
+                    segments=[
+                        VideoSegment(
+                            segment_id="ov1",
+                            source_id="second",
+                            timeline_start_us=1_000_000,
+                            timeline_duration_us=1_000_000,
+                            source_start_us=4_000_000,
+                            source_duration_us=1_000_000,
+                            transform=Transform(
+                                x=0.2, y=-0.1, scale_x=0.4, scale_y=0.4, opacity=0.8
+                            ),
+                        )
+                    ],
+                ),
+                TextTrack(
+                    track_id="text",
+                    name="Text",
+                    segments=[
+                        TextSegment(
+                            segment_id="t1", start_us=500_000, duration_us=1_000_000, text="hello"
+                        )
+                    ],
+                ),
+                AudioTrack(
+                    track_id="bgm",
+                    name="BGM",
+                    role="bgm",
+                    segments=[
+                        AudioSegment(
+                            segment_id="a1",
+                            source_id="music",
+                            timeline_start_us=0,
+                            timeline_duration_us=4_000_000,
+                            source_start_us=0,
+                            source_duration_us=4_000_000,
+                            volume=0.1,
+                        )
+                    ],
+                ),
+            ],
+            transitions=edges,
+        ),
     )
-    assert (timeline.subtitles[0].target_start_frame, timeline.subtitles[0].target_end_frame) == (
-        75,
-        90,
-    )
-    cue = next(track.cues[0] for track in timeline.audio_tracks if track.kind == "sfx")
-    assert cue.target_start_frame == 68
-    assert cue.target_duration_frames == 8
 
 
-def test_projection_rejects_deleted_source_range_unless_snap_is_explicit() -> None:
+def compile(value: EditingProjectV2):
+    return TimelineCompilerV2(RenderProfile()).compile(
+        session_id=SESSION,
+        state_version=2,
+        project=value,
+        sources={"first": media("first"), "second": media("second"), "music": media("music")},
+    )
+
+
+@pytest.mark.parametrize(
+    "fps_num,fps_den", [(24, 1), (25, 1), (30, 1), (30_000, 1001), (50, 1), (60, 1), (60_000, 1001)]
+)
+def test_frame_quantization_is_central_and_deterministic(fps_num: int, fps_den: int) -> None:
+    first = compile(project(fps_num=fps_num, fps_den=fps_den))
+    second = compile(project(fps_num=fps_num, fps_den=fps_den))
+    assert first.frame_count == round(4 * fps_num / fps_den)
+    assert first.compiled_hash == second.compiled_hash
+
+
+def test_compiler_emits_multi_video_overlay_audio_and_text_tracks() -> None:
+    timeline = compile(project())
+    assert len(timeline.video_tracks) == 2
+    assert timeline.video_tracks[1].segments[0].transform.opacity == 0.8
+    assert timeline.audio_tracks[0].role == "bgm"
+    assert timeline.text_tracks[0].segments[0].text == "hello"
+    assert timeline.schema_name == "camcat-compiled-timeline/v2"
+
+
+def test_speed_and_occurrence_bound_source_mapping() -> None:
+    value = project()
+    payload = value.model_dump(mode="json", by_alias=True)
+    payload["timeline"]["tracks"][0]["segments"][0].update(
+        timeline_duration_us=1_000_000, source_duration_us=2_000_000, speed=2
+    )
+    payload["timeline"]["tracks"][0]["segments"][1]["timeline_start_us"] = 1_000_000
+    payload["timeline"]["tracks"][3]["segments"][0]["timeline_duration_us"] = 3_000_000
+    payload["timeline"]["tracks"][3]["segments"][0]["source_duration_us"] = 3_000_000
+    value = EditingProjectV2.model_validate(payload)
+    timeline = compile(value)
     mapper = SourceTimeMapper.from_segments(
-        TimelineCompiler(RenderProfile(width=640, height=360, fps_num=30))
-        .compile(
-            session_id=SESSION_ID,
-            state_version=1,
-            document=document(clip("a", "one", 2.0, 4.0)),
-            sources={"one": fingerprint("one")},
-        )
-        .video_tracks[0]
-        .segments,
+        [item for track in timeline.video_tracks for item in track.segments],
         fps_num=30,
         fps_den=1,
     )
-    with pytest.raises(TimelineValidationError, match="deleted source range"):
-        mapper.project("one", 1_000_000)
-    assert mapper.project("one", 1_000_000, ProjectionPolicy.SNAP_NEXT) == 0
-
-
-def test_protected_range_cannot_be_removed_by_frame_alignment() -> None:
-    state = document(
-        clip(
-            "a",
-            "one",
-            0.0,
-            0.051,
-            protected_ranges=[
-                {
-                    "start_us": 0,
-                    "end_us": 51_000,
-                    "reason": "protected_speech",
-                    "evidence": {"text": "word", "asr_confidence": 0.9},
-                }
-            ],
+    assert (
+        mapper.project(
+            track_id="main", segment_id="v1", source_id="first", source_time_us=2_000_000
         )
+        == 15
     )
-    with pytest.raises(TimelineValidationError, match="protected"):
-        TimelineCompiler(RenderProfile(width=640, height=360, fps_num=30)).compile(
-            session_id=SESSION_ID,
-            state_version=1,
-            document=state,
-            sources={"one": fingerprint("one")},
+    assert (
+        mapper.project(
+            track_id="main",
+            segment_id="v2",
+            source_id="second",
+            source_time_us=2_000_000,
         )
-
-
-def test_dissolve_creates_real_overlap_and_reduces_final_duration() -> None:
-    state = document(
-        clip(
-            "a",
-            "one",
-            1.0,
-            3.0,
-            transition="dissolve",
-        ),
-        clip("b", "two", 1.0, 3.0),
+        == 60
     )
-    timeline = TimelineCompiler(
-        RenderProfile(width=1280, height=720, fps_num=30, default_dissolve_duration_ms=400)
-    ).compile(
-        session_id=SESSION_ID,
-        state_version=1,
-        document=state,
-        sources={"one": fingerprint("one"), "two": fingerprint("two")},
+    assert (
+        mapper.project(
+            track_id="overlay",
+            segment_id="ov1",
+            source_id="second",
+            source_time_us=4_500_000,
+        )
+        == 45
     )
-    first, second = timeline.video_tracks[0].segments
-    assert first.transition_out.duration_frames == 12
-    assert second.transition_in.duration_frames == 12
-    assert second.target_start_frame == 48
-    assert timeline.frame_count == 108
-
-
-def test_dissolve_rejects_missing_source_handles() -> None:
-    state = document(
-        clip(
-            "a",
-            "one",
-            0.0,
-            2.0,
-            transition="dissolve",
-        ),
-        clip("b", "two", 0.0, 2.0),
-    )
-    with pytest.raises(TimelineValidationError, match="handle"):
-        TimelineCompiler(
-            RenderProfile(width=1280, height=720, fps_num=30, default_dissolve_duration_ms=400)
-        ).compile(
-            session_id=SESSION_ID,
-            state_version=1,
-            document=state,
-            sources={"one": fingerprint("one"), "two": fingerprint("two")},
+    with pytest.raises(TimelineValidationError, match="exact"):
+        mapper.project(
+            track_id="main", segment_id="missing", source_id="first", source_time_us=2_000_000
         )
 
 
-def test_source_range_out_of_bounds_is_rejected() -> None:
-    with pytest.raises(TimelineValidationError, match="source range"):
-        TimelineCompiler(RenderProfile(width=640, height=360, fps_num=60)).compile(
-            session_id=SESSION_ID,
-            state_version=1,
-            document=document(clip("a", "one", 9.0, 11.0)),
-            sources={"one": fingerprint("one")},
-        )
+def test_dissolve_uses_render_handles_without_shortening_semantic_duration() -> None:
+    timeline = compile(project(transition=True))
+    left, right = timeline.video_tracks[0].segments
+    assert timeline.frame_count == 120
+    assert left.visible_source_duration_us == 2_000_000
+    assert left.render_source_duration_us > left.visible_source_duration_us
+    assert right.render_source_start_us < right.visible_source_start_us
+    assert right.timeline_start_frame == 60
+    assert timeline.transitions[0].duration_frames == 12
 
 
-def test_subtitle_requires_source_binding_instead_of_target_timestamps() -> None:
-    state = document(clip("a", "one", 0.0, 2.0))
-    state["subtitles"] = [
-        {"subtitle_id": "legacy", "text": "target-bound", "start": 0.1, "end": 0.5}
-    ]
-
-    with pytest.raises(TimelineValidationError, match="source-bound"):
-        TimelineCompiler(RenderProfile(width=640, height=360, fps_num=30)).compile(
-            session_id=SESSION_ID,
-            state_version=1,
-            document=state,
-            sources={"one": fingerprint("one")},
-        )
-
-
-def test_compiled_hash_does_not_depend_on_job_local_source_path() -> None:
-    profile = RenderProfile(width=640, height=360, fps_num=30)
-    state = document(clip("a", "one", 0.0, 2.0))
-    first_source = fingerprint("one").model_copy(update={"local_path": "/runtime/jobs/a/source"})
-    second_source = first_source.model_copy(update={"local_path": "/runtime/jobs/b/source"})
-
-    first = TimelineCompiler(profile).compile(
-        session_id=SESSION_ID,
-        state_version=1,
-        document=state,
-        sources={"one": first_source},
-    )
-    second = TimelineCompiler(profile).compile(
-        session_id=SESSION_ID,
-        state_version=1,
-        document=state,
-        sources={"one": second_source},
-    )
-
-    assert first.source_manifest_hash == second.source_manifest_hash
-    assert first.compiled_hash == second.compiled_hash
+def test_insufficient_dissolve_handle_fails_closed() -> None:
+    value = project(transition=True)
+    payload = value.model_dump(mode="json", by_alias=True)
+    payload["timeline"]["tracks"][0]["segments"][0]["source_start_us"] = 0
+    payload["timeline"]["tracks"][0]["segments"][1]["source_start_us"] = 0
+    with pytest.raises(TimelineValidationError, match="handles"):
+        compile(EditingProjectV2.model_validate(payload))

@@ -6,6 +6,7 @@ from typing import Protocol
 from pydantic import BaseModel, ConfigDict
 
 from camcat.rendering.build import RenderBuild
+from camcat.rendering.materialization import MaterializedSources
 
 
 class RenderResult(BaseModel):
@@ -17,4 +18,6 @@ class RenderResult(BaseModel):
 
 
 class RendererBackend(Protocol):
-    def render(self, build: RenderBuild, output: Path) -> RenderResult: ...
+    def render(
+        self, build: RenderBuild, sources: MaterializedSources, output: Path
+    ) -> RenderResult: ...

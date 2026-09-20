@@ -61,83 +61,14 @@ def prepare_source_candidates(candidates: Iterable[dict[str, Any]]) -> list[dict
     return [item for index, item in enumerate(items) if index in selected]
 
 
-def enforce_timeline_policy(
-    proposed: Iterable[dict[str, Any]], *, external_ratio_limit: float = 0.25
-) -> list[dict[str, Any]]:
-    """Make user footage primary and deterministically bound supplemental library footage."""
-    limit = min(0.75, max(0.0, float(external_ratio_limit)))
-    raw = [dict(item) for item in proposed]
-    source = [item for item in raw if item.get("origin", "source") == "source"]
-    library = [item for item in raw if item.get("origin") == "library"]
-    if not source:
-        raise ValueError("editing plan must contain user source footage")
-
-    source_duration = sum(_duration(item) for item in source)
-    # external / (source + external) <= limit
-    budget = source_duration * limit / (1.0 - limit) if limit < 1 else source_duration
-    accepted_library: list[dict[str, Any]] = []
-    remaining = budget
-    for item in library:
-        duration = _duration(item)
-        if remaining <= 0:
-            break
-        if duration > remaining:
-            item["source_end"] = float(item["source_start"]) + remaining
-            duration = remaining
-        if duration > 0.1:
-            accepted_library.append(item)
-            remaining -= duration
-
-    # Preserve proposed relative order, but never open on stock when source footage exists.
-    library_keys = {
-        (
-            str(item.get("segment_id")),
-            float(item.get("source_start", 0)),
-            float(item.get("source_end", 0)),
-        )
-        for item in accepted_library
-    }
-    ordered = []
-    first_source = source[0]
-    ordered.append(first_source)
-    for item in raw:
-        if item is first_source:
-            continue
-        if (
-            item.get("origin", "source") == "source"
-            or (
-                str(item.get("segment_id")),
-                float(item.get("source_start", 0)),
-                float(item.get("source_end", 0)),
-            )
-            in library_keys
-        ):
-            ordered.append(item)
-
-    result: list[dict[str, Any]] = []
-    for index, item in enumerate(ordered):
-        duration = _duration(item)
-        if duration <= 0:
-            continue
-        item["clip_id"] = str(item.get("clip_id") or f"clip-{index + 1}")
-        result.append(item)
-    if result:
-        result[-1]["transition"] = "cut"
-    return result
-
-
 def explicit_external_ratio(instruction: str) -> float:
     normalized = instruction.lower()
-    match = re.search(r"(?:外部|素材库|stock)[^%]{0,12}(\d{1,2})\s*%", normalized)
+    match = re.search(r"(?:外部|素材库|stock)[^%\d]{0,12}(\d{1,2})\s*%", normalized)
     if match:
         return min(0.75, max(0.0, int(match.group(1)) / 100))
     if re.search(r"全部使用外部|主要使用素材库|stock[- ]?only", normalized):
         return 0.75
     return 0.25
-
-
-def _duration(item: dict[str, Any]) -> float:
-    return max(0.0, float(item.get("source_end", 0)) - float(item.get("source_start", 0)))
 
 
 def _ratio_value(ratio: str) -> float:

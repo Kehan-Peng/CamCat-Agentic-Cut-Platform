@@ -163,7 +163,10 @@ test("agent edit, render and job polling carry the state version", async () => {
     fetchImpl: async (url, init) => {
       requests.push({ url, init });
       if (url.endsWith("/agent")) {
-        return response({ editing_session_id: "s1", state_version: 2, state: { clips: [{}] } });
+        return response({ editing_session_id: "s1", state_version: 2, state: { timeline: { tracks: [] } } });
+      }
+      if (url.endsWith("/commands")) {
+        return response({ editing_session_id: "s1", state_version: 3, state: { timeline: { tracks: [] } } });
       }
       if (url.endsWith("/render")) {
         return response({ job_id: "j1", status: "queued", progress: 0 });
@@ -173,12 +176,19 @@ test("agent edit, render and job polling carry the state version", async () => {
   });
 
   await client.runEditingAgent("s1", 1, "剪成 15 秒");
-  await client.renderEditingSession("s1", 2);
+  await client.applyEditCommands("s1", 2, [{ type: "update_title", title: "V2" }], "rename");
+  await client.renderEditingSession("s1", 3);
   const job = await client.getJob("j1");
 
   assert.deepEqual(JSON.parse(requests[0].init.body), { base_version: 1, instruction: "剪成 15 秒" });
-  assert.equal(JSON.parse(requests[1].init.body).base_version, 2);
-  assert.equal("resolution" in JSON.parse(requests[1].init.body), false);
+  assert.deepEqual(JSON.parse(requests[1].init.body), {
+    base_version: 2,
+    commands: [{ type: "update_title", title: "V2" }],
+    reason: "rename",
+  });
+  assert.match(requests[1].url, /\/commands$/);
+  assert.equal(JSON.parse(requests[2].init.body).base_version, 3);
+  assert.equal("resolution" in JSON.parse(requests[2].init.body), false);
   assert.equal(job.result.output_url, "https://cdn.test/out.mp4");
 });
 
@@ -244,12 +254,12 @@ test("first edit creates a session and runs exactly one retrieval graph", async 
   const api = {
     async createEditingSession(videoId, goal, sourceJobId) {
       calls.push(["create", videoId, goal, sourceJobId]);
-      return { editing_session_id: "s1", state_version: 1, state: { clips: [] } };
+      return { editing_session_id: "s1", state_version: 1, state: { timeline: { tracks: [] } } };
     },
     async runEditingAgentStream(sessionId, version, instruction, onEvent, image) {
       calls.push(["edit", sessionId, version, instruction, image]);
       return {
-        session: { editing_session_id: "s1", state_version: 2, state: { clips: [{ clip_id: "c1" }] } },
+        session: { editing_session_id: "s1", state_version: 2, state: { timeline: { tracks: [{ type: "video", segments: [{ segment_id: "seg-1" }] }] } } },
         agentRun: { graph_run_id: "g1", ranked_segments: [{ video_id: "vid_retrieved" }] },
       };
     },
@@ -261,7 +271,7 @@ test("first edit creates a session and runs exactly one retrieval graph", async 
     queryImageBase64: "data:image/png;base64,YQ==",
   });
 
-  assert.equal(result.editingSession.state.clips.length, 1);
+  assert.equal(result.editingSession.state.timeline.tracks[0].segments.length, 1);
   assert.deepEqual(calls, [
     ["create", undefined, "剪成一条节奏明快的视频", "source_job_1"],
     ["edit", "s1", 1, "剪成一条节奏明快的视频", "data:image/png;base64,YQ=="],

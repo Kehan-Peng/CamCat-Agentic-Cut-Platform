@@ -4156,202 +4156,6 @@
             }
           }
         }
-      },
-      "patch": {
-        "summary": "Patch Editing Session",
-        "operationId": "patch_editing_session_api_v1_editing_sessions__session_id__patch",
-        "parameters": [
-          {
-            "name": "session_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Session Id"
-            }
-          },
-          {
-            "name": "X-User-Id",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-User-Id"
-            }
-          },
-          {
-            "name": "X-Authenticated-User",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Authenticated-User"
-            }
-          },
-          {
-            "name": "X-CamCat-Proxy-Secret",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Camcat-Proxy-Secret"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchEditingSessionRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EditingSessionResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "CamCat error envelope",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "CamCat error envelope",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "CamCat error envelope",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "CamCat error envelope",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "CamCat error envelope",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "410": {
-            "description": "CamCat error envelope",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "413": {
-            "description": "CamCat error envelope",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "415": {
-            "description": "CamCat error envelope",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "CamCat error envelope",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "CamCat error envelope",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "502": {
-            "description": "CamCat error envelope",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        }
       }
     },
     "/api/v1/editing/sessions/{session_id}/versions": {
@@ -4881,6 +4685,204 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "CamCat error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "CamCat error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "CamCat error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "CamCat error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "CamCat error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "CamCat error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "CamCat error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "CamCat error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "CamCat error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "CamCat error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "CamCat error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/editing/sessions/{session_id}/commands": {
+      "post": {
+        "summary": "Apply Edit Commands",
+        "operationId": "apply_edit_commands_api_v1_editing_sessions__session_id__commands_post",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-User-Id"
+            }
+          },
+          {
+            "name": "X-Authenticated-User",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Authenticated-User"
+            }
+          },
+          {
+            "name": "X-CamCat-Proxy-Secret",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Camcat-Proxy-Secret"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditCommandBatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditCommandBatchResponse"
                 }
               }
             }
@@ -5791,6 +5793,100 @@
   },
   "components": {
     "schemas": {
+      "AddAudioSegment": {
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Command Id"
+          },
+          "type": {
+            "type": "string",
+            "const": "add_audio_segment",
+            "title": "Type",
+            "default": "add_audio_segment"
+          },
+          "track_id": {
+            "type": "string",
+            "title": "Track Id"
+          },
+          "segment": {
+            "$ref": "#/components/schemas/AudioSegment"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "track_id",
+          "segment"
+        ],
+        "title": "AddAudioSegment"
+      },
+      "AddTrack": {
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Command Id"
+          },
+          "type": {
+            "type": "string",
+            "const": "add_track",
+            "title": "Type",
+            "default": "add_track"
+          },
+          "track": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/VideoTrack"
+              },
+              {
+                "$ref": "#/components/schemas/TextTrack"
+              },
+              {
+                "$ref": "#/components/schemas/AudioTrack"
+              }
+            ],
+            "title": "Track",
+            "discriminator": {
+              "propertyName": "type",
+              "mapping": {
+                "audio": "#/components/schemas/AudioTrack",
+                "text": "#/components/schemas/TextTrack",
+                "video": "#/components/schemas/VideoTrack"
+              }
+            }
+          },
+          "before_track_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before Track Id"
+          },
+          "after_track_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After Track Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "track"
+        ],
+        "title": "AddTrack"
+      },
       "AgentEditRequest": {
         "properties": {
           "base_version": {
@@ -5879,6 +5975,126 @@
         ],
         "title": "AgenticSearchResponse"
       },
+      "AudioSegment": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "audio",
+            "title": "Type",
+            "default": "audio"
+          },
+          "segment_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Segment Id"
+          },
+          "source_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Source Id"
+          },
+          "timeline_start_us": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Timeline Start Us"
+          },
+          "timeline_duration_us": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Timeline Duration Us"
+          },
+          "source_start_us": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Source Start Us"
+          },
+          "source_duration_us": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Source Duration Us"
+          },
+          "volume": {
+            "type": "number",
+            "maximum": 4.0,
+            "minimum": 0.0,
+            "title": "Volume",
+            "default": 1.0
+          },
+          "fade_in_us": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Fade In Us",
+            "default": 0
+          },
+          "fade_out_us": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Fade Out Us",
+            "default": 0
+          },
+          "loop": {
+            "type": "boolean",
+            "title": "Loop",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "segment_id",
+          "source_id",
+          "timeline_start_us",
+          "timeline_duration_us",
+          "source_start_us",
+          "source_duration_us"
+        ],
+        "title": "AudioSegment"
+      },
+      "AudioTrack": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "audio",
+            "title": "Type",
+            "default": "audio"
+          },
+          "track_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Track Id"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Name"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "dialogue",
+              "bgm",
+              "ambient",
+              "sfx"
+            ],
+            "title": "Role"
+          },
+          "segments": {
+            "items": {
+              "$ref": "#/components/schemas/AudioSegment"
+            },
+            "type": "array",
+            "title": "Segments"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "track_id",
+          "name",
+          "role"
+        ],
+        "title": "AudioTrack"
+      },
       "Body_upload_source_media_api_v1_source_media_post": {
         "properties": {
           "files": {
@@ -5933,6 +6149,76 @@
           "source_url"
         ],
         "title": "Body_upload_video_api_v1_videos_post"
+      },
+      "Canvas": {
+        "properties": {
+          "width": {
+            "type": "integer",
+            "maximum": 7680.0,
+            "minimum": 16.0,
+            "title": "Width"
+          },
+          "height": {
+            "type": "integer",
+            "maximum": 7680.0,
+            "minimum": 16.0,
+            "title": "Height"
+          },
+          "fps_num": {
+            "type": "integer",
+            "maximum": 60000.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Fps Num"
+          },
+          "fps_den": {
+            "type": "integer",
+            "maximum": 1001.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Fps Den"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "width",
+          "height",
+          "fps_num",
+          "fps_den"
+        ],
+        "title": "Canvas"
+      },
+      "CommandAuditResponse": {
+        "properties": {
+          "patch_id": {
+            "type": "string",
+            "title": "Patch Id"
+          },
+          "base_version": {
+            "type": "integer",
+            "title": "Base Version"
+          },
+          "result_version": {
+            "type": "integer",
+            "title": "Result Version"
+          },
+          "actor": {
+            "type": "string",
+            "title": "Actor"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "patch_id",
+          "base_version",
+          "result_version",
+          "actor",
+          "reason"
+        ],
+        "title": "CommandAuditResponse"
       },
       "CreateEditingSessionRequest": {
         "properties": {
@@ -6000,6 +6286,216 @@
         ],
         "title": "CreateProjectRequest"
       },
+      "EditCommandBatch": {
+        "properties": {
+          "base_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Base Version"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Reason"
+          },
+          "commands": {
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/InitializeEditingProject"
+                },
+                {
+                  "$ref": "#/components/schemas/RegisterSource"
+                },
+                {
+                  "$ref": "#/components/schemas/UpdateCanvas"
+                },
+                {
+                  "$ref": "#/components/schemas/AddTrack"
+                },
+                {
+                  "$ref": "#/components/schemas/RemoveTrack"
+                },
+                {
+                  "$ref": "#/components/schemas/RenameTrack"
+                },
+                {
+                  "$ref": "#/components/schemas/InsertSegment"
+                },
+                {
+                  "$ref": "#/components/schemas/RemoveSegment"
+                },
+                {
+                  "$ref": "#/components/schemas/MoveSegment"
+                },
+                {
+                  "$ref": "#/components/schemas/TrimSegment"
+                },
+                {
+                  "$ref": "#/components/schemas/SplitSegment"
+                },
+                {
+                  "$ref": "#/components/schemas/ReplaceSegmentMedia"
+                },
+                {
+                  "$ref": "#/components/schemas/SetSegmentTransform"
+                },
+                {
+                  "$ref": "#/components/schemas/UpdateTextSegment"
+                },
+                {
+                  "$ref": "#/components/schemas/AddAudioSegment"
+                },
+                {
+                  "$ref": "#/components/schemas/UpdateAudioSegment"
+                },
+                {
+                  "$ref": "#/components/schemas/RemoveAudioSegment"
+                },
+                {
+                  "$ref": "#/components/schemas/SetTransition"
+                },
+                {
+                  "$ref": "#/components/schemas/RemoveTransition"
+                },
+                {
+                  "$ref": "#/components/schemas/UpdateTitle"
+                },
+                {
+                  "$ref": "#/components/schemas/UpdateGoal"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "add_audio_segment": "#/components/schemas/AddAudioSegment",
+                  "add_track": "#/components/schemas/AddTrack",
+                  "initialize_editing_project": "#/components/schemas/InitializeEditingProject",
+                  "insert_segment": "#/components/schemas/InsertSegment",
+                  "move_segment": "#/components/schemas/MoveSegment",
+                  "register_source": "#/components/schemas/RegisterSource",
+                  "remove_audio_segment": "#/components/schemas/RemoveAudioSegment",
+                  "remove_segment": "#/components/schemas/RemoveSegment",
+                  "remove_track": "#/components/schemas/RemoveTrack",
+                  "remove_transition": "#/components/schemas/RemoveTransition",
+                  "rename_track": "#/components/schemas/RenameTrack",
+                  "replace_segment_media": "#/components/schemas/ReplaceSegmentMedia",
+                  "set_segment_transform": "#/components/schemas/SetSegmentTransform",
+                  "set_transition": "#/components/schemas/SetTransition",
+                  "split_segment": "#/components/schemas/SplitSegment",
+                  "trim_segment": "#/components/schemas/TrimSegment",
+                  "update_audio_segment": "#/components/schemas/UpdateAudioSegment",
+                  "update_canvas": "#/components/schemas/UpdateCanvas",
+                  "update_goal": "#/components/schemas/UpdateGoal",
+                  "update_text_segment": "#/components/schemas/UpdateTextSegment",
+                  "update_title": "#/components/schemas/UpdateTitle"
+                }
+              }
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Commands"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "base_version",
+          "reason",
+          "commands"
+        ],
+        "title": "EditCommandBatch"
+      },
+      "EditCommandBatchResponse": {
+        "properties": {
+          "editing_session_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Editing Session Id"
+          },
+          "state_version": {
+            "type": "integer",
+            "title": "State Version"
+          },
+          "state": {
+            "$ref": "#/components/schemas/EditingProjectV2"
+          },
+          "audit": {
+            "$ref": "#/components/schemas/CommandAuditResponse"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "editing_session_id",
+          "state_version",
+          "state",
+          "audit",
+          "updated_at"
+        ],
+        "title": "EditCommandBatchResponse"
+      },
+      "EditingProjectV2": {
+        "properties": {
+          "schema": {
+            "type": "string",
+            "const": "camcat-editing-project/v2",
+            "title": "Schema",
+            "default": "camcat-editing-project/v2"
+          },
+          "project_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Project Id"
+          },
+          "goal": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Goal"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Title"
+          },
+          "canvas": {
+            "$ref": "#/components/schemas/Canvas"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/MediaSourceRef"
+            },
+            "type": "array",
+            "title": "Sources"
+          },
+          "timeline": {
+            "$ref": "#/components/schemas/TimelineV2"
+          },
+          "speech_review": {
+            "$ref": "#/components/schemas/SpeechReview"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "project_id",
+          "goal",
+          "title",
+          "canvas"
+        ],
+        "title": "EditingProjectV2"
+      },
       "EditingSessionResponse": {
         "properties": {
           "editing_session_id": {
@@ -6012,9 +6508,7 @@
             "title": "State Version"
           },
           "state": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "State"
+            "$ref": "#/components/schemas/EditingProjectV2"
           },
           "updated_at": {
             "type": "string",
@@ -6070,6 +6564,34 @@
           "error"
         ],
         "title": "ErrorEnvelope"
+      },
+      "EvidenceRef": {
+        "properties": {
+          "evidence_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Id"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind",
+            "default": ""
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "EvidenceRef"
       },
       "GraphRunResponse": {
         "properties": {
@@ -6192,6 +6714,100 @@
         ],
         "title": "ImportOpenMediaRequest"
       },
+      "InitializeEditingProject": {
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Command Id"
+          },
+          "type": {
+            "type": "string",
+            "const": "initialize_editing_project",
+            "title": "Type",
+            "default": "initialize_editing_project"
+          },
+          "project": {
+            "$ref": "#/components/schemas/EditingProjectV2"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "project"
+        ],
+        "title": "InitializeEditingProject"
+      },
+      "InsertSegment": {
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Command Id"
+          },
+          "type": {
+            "type": "string",
+            "const": "insert_segment",
+            "title": "Type",
+            "default": "insert_segment"
+          },
+          "track_id": {
+            "type": "string",
+            "title": "Track Id"
+          },
+          "segment": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/VideoSegment"
+              },
+              {
+                "$ref": "#/components/schemas/TextSegment"
+              },
+              {
+                "$ref": "#/components/schemas/AudioSegment"
+              }
+            ],
+            "title": "Segment",
+            "discriminator": {
+              "propertyName": "type",
+              "mapping": {
+                "audio": "#/components/schemas/AudioSegment",
+                "text": "#/components/schemas/TextSegment",
+                "video": "#/components/schemas/VideoSegment"
+              }
+            }
+          },
+          "before_segment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before Segment Id"
+          },
+          "after_segment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After Segment Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "track_id",
+          "segment"
+        ],
+        "title": "InsertSegment"
+      },
       "JobResponse": {
         "properties": {
           "job_id": {
@@ -6289,6 +6905,102 @@
         ],
         "title": "JobResponse"
       },
+      "MediaSourceRef": {
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Source Id"
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "user_upload",
+              "licensed_library"
+            ],
+            "title": "Origin"
+          },
+          "storage_key": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Storage Key"
+          },
+          "retention_class": {
+            "type": "string",
+            "enum": [
+              "transient_4h",
+              "library"
+            ],
+            "title": "Retention Class"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "source_id",
+          "origin",
+          "storage_key",
+          "retention_class"
+        ],
+        "title": "MediaSourceRef"
+      },
+      "MoveSegment": {
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Command Id"
+          },
+          "type": {
+            "type": "string",
+            "const": "move_segment",
+            "title": "Type",
+            "default": "move_segment"
+          },
+          "track_id": {
+            "type": "string",
+            "title": "Track Id"
+          },
+          "segment_id": {
+            "type": "string",
+            "title": "Segment Id"
+          },
+          "before_segment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before Segment Id"
+          },
+          "after_segment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After Segment Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "track_id",
+          "segment_id"
+        ],
+        "title": "MoveSegment"
+      },
       "PageResponse": {
         "properties": {
           "items": {
@@ -6316,63 +7028,6 @@
           "items"
         ],
         "title": "PageResponse"
-      },
-      "PatchEditingSessionRequest": {
-        "properties": {
-          "base_version": {
-            "type": "integer",
-            "minimum": 1.0,
-            "title": "Base Version"
-          },
-          "operations": {
-            "items": {
-              "$ref": "#/components/schemas/PatchOperationRequest"
-            },
-            "type": "array",
-            "maxItems": 100,
-            "minItems": 1,
-            "title": "Operations"
-          },
-          "reason": {
-            "type": "string",
-            "maxLength": 1000,
-            "minLength": 1,
-            "title": "Reason"
-          }
-        },
-        "type": "object",
-        "required": [
-          "base_version",
-          "operations",
-          "reason"
-        ],
-        "title": "PatchEditingSessionRequest"
-      },
-      "PatchOperationRequest": {
-        "properties": {
-          "op": {
-            "type": "string",
-            "enum": [
-              "add",
-              "replace",
-              "remove"
-            ],
-            "title": "Op"
-          },
-          "path": {
-            "type": "string",
-            "title": "Path"
-          },
-          "value": {
-            "title": "Value"
-          }
-        },
-        "type": "object",
-        "required": [
-          "op",
-          "path"
-        ],
-        "title": "PatchOperationRequest"
       },
       "ProjectResponse": {
         "properties": {
@@ -6527,6 +7182,171 @@
         ],
         "title": "RankedSegmentResponse"
       },
+      "RegisterSource": {
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Command Id"
+          },
+          "type": {
+            "type": "string",
+            "const": "register_source",
+            "title": "Type",
+            "default": "register_source"
+          },
+          "source": {
+            "$ref": "#/components/schemas/MediaSourceRef"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "source"
+        ],
+        "title": "RegisterSource"
+      },
+      "RemoveAudioSegment": {
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Command Id"
+          },
+          "type": {
+            "type": "string",
+            "const": "remove_audio_segment",
+            "title": "Type",
+            "default": "remove_audio_segment"
+          },
+          "track_id": {
+            "type": "string",
+            "title": "Track Id"
+          },
+          "segment_id": {
+            "type": "string",
+            "title": "Segment Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "track_id",
+          "segment_id"
+        ],
+        "title": "RemoveAudioSegment"
+      },
+      "RemoveSegment": {
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Command Id"
+          },
+          "type": {
+            "type": "string",
+            "const": "remove_segment",
+            "title": "Type",
+            "default": "remove_segment"
+          },
+          "track_id": {
+            "type": "string",
+            "title": "Track Id"
+          },
+          "segment_id": {
+            "type": "string",
+            "title": "Segment Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "track_id",
+          "segment_id"
+        ],
+        "title": "RemoveSegment"
+      },
+      "RemoveTrack": {
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Command Id"
+          },
+          "type": {
+            "type": "string",
+            "const": "remove_track",
+            "title": "Type",
+            "default": "remove_track"
+          },
+          "track_id": {
+            "type": "string",
+            "title": "Track Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "track_id"
+        ],
+        "title": "RemoveTrack"
+      },
+      "RemoveTransition": {
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Command Id"
+          },
+          "type": {
+            "type": "string",
+            "const": "remove_transition",
+            "title": "Type",
+            "default": "remove_transition"
+          },
+          "transition_id": {
+            "type": "string",
+            "title": "Transition Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "transition_id"
+        ],
+        "title": "RemoveTransition"
+      },
+      "RenameTrack": {
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Command Id"
+          },
+          "type": {
+            "type": "string",
+            "const": "rename_track",
+            "title": "Type",
+            "default": "rename_track"
+          },
+          "track_id": {
+            "type": "string",
+            "title": "Track Id"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Name"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "track_id",
+          "name"
+        ],
+        "title": "RenameTrack"
+      },
       "RenderRequest": {
         "properties": {
           "base_version": {
@@ -6534,47 +7354,71 @@
             "minimum": 1.0,
             "title": "Base Version"
           },
-          "resolution": {
-            "anyOf": [
-              {
-                "type": "string",
-                "enum": [
-                  "1080x1920",
-                  "1920x1080",
-                  "1080x1080",
-                  "1080x1440",
-                  "1440x1080"
-                ]
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Resolution"
+          "renderer": {
+            "type": "string",
+            "const": "ffmpeg",
+            "title": "Renderer",
+            "default": "ffmpeg"
           },
-          "burn_subtitles": {
-            "type": "boolean",
-            "title": "Burn Subtitles",
-            "default": true
-          },
-          "fps": {
-            "type": "integer",
+          "quality_profile": {
+            "type": "string",
             "enum": [
-              24,
-              25,
-              30,
-              50,
-              60
+              "preview",
+              "standard",
+              "high"
             ],
-            "title": "Fps",
-            "default": 30
+            "title": "Quality Profile",
+            "default": "standard"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "base_version"
         ],
         "title": "RenderRequest"
+      },
+      "ReplaceSegmentMedia": {
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Command Id"
+          },
+          "type": {
+            "type": "string",
+            "const": "replace_segment_media",
+            "title": "Type",
+            "default": "replace_segment_media"
+          },
+          "segment_id": {
+            "type": "string",
+            "title": "Segment Id"
+          },
+          "source_id": {
+            "type": "string",
+            "title": "Source Id"
+          },
+          "source_start_us": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Source Start Us"
+          },
+          "source_duration_us": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Source Duration Us"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "segment_id",
+          "source_id",
+          "source_start_us",
+          "source_duration_us"
+        ],
+        "title": "ReplaceSegmentMedia"
       },
       "RollbackRequest": {
         "properties": {
@@ -6650,6 +7494,112 @@
           "thread_id"
         ],
         "title": "SearchRequest"
+      },
+      "SetSegmentTransform": {
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Command Id"
+          },
+          "type": {
+            "type": "string",
+            "const": "set_segment_transform",
+            "title": "Type",
+            "default": "set_segment_transform"
+          },
+          "segment_id": {
+            "type": "string",
+            "title": "Segment Id"
+          },
+          "x": {
+            "type": "number",
+            "title": "X"
+          },
+          "y": {
+            "type": "number",
+            "title": "Y"
+          },
+          "scale_x": {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "title": "Scale X"
+          },
+          "scale_y": {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "title": "Scale Y"
+          },
+          "rotation": {
+            "type": "number",
+            "title": "Rotation",
+            "default": 0
+          },
+          "opacity": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Opacity",
+            "default": 1
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "segment_id",
+          "x",
+          "y",
+          "scale_x",
+          "scale_y"
+        ],
+        "title": "SetSegmentTransform"
+      },
+      "SetTransition": {
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Command Id"
+          },
+          "type": {
+            "type": "string",
+            "const": "set_transition",
+            "title": "Type",
+            "default": "set_transition"
+          },
+          "transition_id": {
+            "type": "string",
+            "title": "Transition Id"
+          },
+          "left_segment_id": {
+            "type": "string",
+            "title": "Left Segment Id"
+          },
+          "right_segment_id": {
+            "type": "string",
+            "title": "Right Segment Id"
+          },
+          "transition_type": {
+            "type": "string",
+            "const": "dissolve",
+            "title": "Transition Type"
+          },
+          "duration_us": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Duration Us"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "transition_id",
+          "left_segment_id",
+          "right_segment_id",
+          "transition_type",
+          "duration_us"
+        ],
+        "title": "SetTransition"
       },
       "SourceMediaReference": {
         "properties": {
@@ -6778,6 +7728,770 @@
         ],
         "title": "SourceUploadResponse"
       },
+      "SpeechEvidence": {
+        "properties": {
+          "evidence_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Evidence Id"
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "KEEP",
+              "DELETE",
+              "CHECK"
+            ],
+            "title": "Decision"
+          },
+          "segment_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Segment Id"
+          },
+          "source_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Source Id"
+          },
+          "source_start_us": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Source Start Us"
+          },
+          "source_end_us": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Source End Us"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text",
+            "default": ""
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "evidence_id",
+          "decision",
+          "segment_id",
+          "source_id",
+          "source_start_us",
+          "source_end_us"
+        ],
+        "title": "SpeechEvidence"
+      },
+      "SpeechReview": {
+        "properties": {
+          "workflow": {
+            "type": "string",
+            "title": "Workflow",
+            "default": ""
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SpeechEvidence"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "SpeechReview"
+      },
+      "SplitSegment": {
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Command Id"
+          },
+          "type": {
+            "type": "string",
+            "const": "split_segment",
+            "title": "Type",
+            "default": "split_segment"
+          },
+          "segment_id": {
+            "type": "string",
+            "title": "Segment Id"
+          },
+          "at_source_us": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "At Source Us"
+          },
+          "right_segment_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Right Segment Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "segment_id",
+          "at_source_us",
+          "right_segment_id"
+        ],
+        "title": "SplitSegment"
+      },
+      "TextSegment": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "text",
+            "title": "Type",
+            "default": "text"
+          },
+          "segment_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Segment Id"
+          },
+          "start_us": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Start Us"
+          },
+          "duration_us": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Duration Us"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Text"
+          },
+          "style": {
+            "$ref": "#/components/schemas/TextStyle"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "segment_id",
+          "start_us",
+          "duration_us",
+          "text"
+        ],
+        "title": "TextSegment"
+      },
+      "TextStyle": {
+        "properties": {
+          "font_family": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Font Family"
+          },
+          "local_font_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Local Font Ref"
+          },
+          "size": {
+            "type": "integer",
+            "maximum": 500.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Size",
+            "default": 42
+          },
+          "x": {
+            "type": "number",
+            "title": "X",
+            "default": 0.5
+          },
+          "y": {
+            "type": "number",
+            "title": "Y",
+            "default": 0.88
+          },
+          "color": {
+            "type": "string",
+            "pattern": "^#[0-9A-Fa-f]{6}$",
+            "title": "Color",
+            "default": "#FFFFFF"
+          },
+          "border_color": {
+            "type": "string",
+            "pattern": "^#[0-9A-Fa-f]{6}$",
+            "title": "Border Color",
+            "default": "#000000"
+          },
+          "border_width": {
+            "type": "number",
+            "maximum": 50.0,
+            "minimum": 0.0,
+            "title": "Border Width",
+            "default": 2.0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "TextStyle"
+      },
+      "TextTrack": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "text",
+            "title": "Type",
+            "default": "text"
+          },
+          "track_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Track Id"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Name"
+          },
+          "segments": {
+            "items": {
+              "$ref": "#/components/schemas/TextSegment"
+            },
+            "type": "array",
+            "title": "Segments"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "track_id",
+          "name"
+        ],
+        "title": "TextTrack"
+      },
+      "TimelineV2": {
+        "properties": {
+          "tracks": {
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/VideoTrack"
+                },
+                {
+                  "$ref": "#/components/schemas/TextTrack"
+                },
+                {
+                  "$ref": "#/components/schemas/AudioTrack"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "audio": "#/components/schemas/AudioTrack",
+                  "text": "#/components/schemas/TextTrack",
+                  "video": "#/components/schemas/VideoTrack"
+                }
+              }
+            },
+            "type": "array",
+            "title": "Tracks"
+          },
+          "transitions": {
+            "items": {
+              "$ref": "#/components/schemas/TransitionEdge"
+            },
+            "type": "array",
+            "title": "Transitions"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "TimelineV2"
+      },
+      "Transform": {
+        "properties": {
+          "x": {
+            "type": "number",
+            "title": "X",
+            "default": 0.0
+          },
+          "y": {
+            "type": "number",
+            "title": "Y",
+            "default": 0.0
+          },
+          "scale_x": {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "title": "Scale X",
+            "default": 1.0
+          },
+          "scale_y": {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "title": "Scale Y",
+            "default": 1.0
+          },
+          "rotation": {
+            "type": "number",
+            "title": "Rotation",
+            "default": 0.0
+          },
+          "opacity": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Opacity",
+            "default": 1.0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "Transform"
+      },
+      "TransitionEdge": {
+        "properties": {
+          "transition_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Transition Id"
+          },
+          "left_segment_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Left Segment Id"
+          },
+          "right_segment_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Right Segment Id"
+          },
+          "type": {
+            "type": "string",
+            "const": "dissolve",
+            "title": "Type"
+          },
+          "duration_us": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Duration Us"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "transition_id",
+          "left_segment_id",
+          "right_segment_id",
+          "type",
+          "duration_us"
+        ],
+        "title": "TransitionEdge"
+      },
+      "TrimSegment": {
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Command Id"
+          },
+          "type": {
+            "type": "string",
+            "const": "trim_segment",
+            "title": "Type",
+            "default": "trim_segment"
+          },
+          "segment_id": {
+            "type": "string",
+            "title": "Segment Id"
+          },
+          "source_start_us": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Source Start Us"
+          },
+          "source_duration_us": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Source Duration Us"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "segment_id",
+          "source_start_us",
+          "source_duration_us"
+        ],
+        "title": "TrimSegment"
+      },
+      "UpdateAudioSegment": {
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Command Id"
+          },
+          "type": {
+            "type": "string",
+            "const": "update_audio_segment",
+            "title": "Type",
+            "default": "update_audio_segment"
+          },
+          "segment_id": {
+            "type": "string",
+            "title": "Segment Id"
+          },
+          "timeline_start_us": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeline Start Us"
+          },
+          "timeline_duration_us": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeline Duration Us"
+          },
+          "source_start_us": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Start Us"
+          },
+          "source_duration_us": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Duration Us"
+          },
+          "volume": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 4.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Volume"
+          },
+          "fade_in_us": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fade In Us"
+          },
+          "fade_out_us": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fade Out Us"
+          },
+          "loop": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Loop"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "segment_id"
+        ],
+        "title": "UpdateAudioSegment"
+      },
+      "UpdateCanvas": {
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Command Id"
+          },
+          "type": {
+            "type": "string",
+            "const": "update_canvas",
+            "title": "Type",
+            "default": "update_canvas"
+          },
+          "canvas": {
+            "$ref": "#/components/schemas/Canvas"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "canvas"
+        ],
+        "title": "UpdateCanvas"
+      },
+      "UpdateGoal": {
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Command Id"
+          },
+          "type": {
+            "type": "string",
+            "const": "update_goal",
+            "title": "Type",
+            "default": "update_goal"
+          },
+          "goal": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Goal"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "goal"
+        ],
+        "title": "UpdateGoal"
+      },
+      "UpdateTextSegment": {
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Command Id"
+          },
+          "type": {
+            "type": "string",
+            "const": "update_text_segment",
+            "title": "Type",
+            "default": "update_text_segment"
+          },
+          "segment_id": {
+            "type": "string",
+            "title": "Segment Id"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "start_us": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Us"
+          },
+          "duration_us": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Us"
+          },
+          "font_family": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Font Family"
+          },
+          "local_font_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Local Font Ref"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 500.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size"
+          },
+          "x": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "X"
+          },
+          "y": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Y"
+          },
+          "color": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^#[0-9A-Fa-f]{6}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Color"
+          },
+          "border_color": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^#[0-9A-Fa-f]{6}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Border Color"
+          },
+          "border_width": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 50.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Border Width"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "segment_id"
+        ],
+        "title": "UpdateTextSegment"
+      },
+      "UpdateTitle": {
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Command Id"
+          },
+          "type": {
+            "type": "string",
+            "const": "update_title",
+            "title": "Type",
+            "default": "update_title"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Title"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "title"
+        ],
+        "title": "UpdateTitle"
+      },
       "VideoResponse": {
         "properties": {
           "video_id": {
@@ -6851,6 +8565,113 @@
           "filename"
         ],
         "title": "VideoResponse"
+      },
+      "VideoSegment": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "video",
+            "title": "Type",
+            "default": "video"
+          },
+          "segment_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Segment Id"
+          },
+          "source_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Source Id"
+          },
+          "timeline_start_us": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Timeline Start Us"
+          },
+          "timeline_duration_us": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Timeline Duration Us"
+          },
+          "source_start_us": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Source Start Us"
+          },
+          "source_duration_us": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Source Duration Us"
+          },
+          "speed": {
+            "type": "number",
+            "maximum": 8.0,
+            "minimum": 0.1,
+            "title": "Speed",
+            "default": 1.0
+          },
+          "transform": {
+            "$ref": "#/components/schemas/Transform"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason",
+            "default": ""
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceRef"
+            },
+            "type": "array",
+            "title": "Evidence"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "segment_id",
+          "source_id",
+          "timeline_start_us",
+          "timeline_duration_us",
+          "source_start_us",
+          "source_duration_us"
+        ],
+        "title": "VideoSegment"
+      },
+      "VideoTrack": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "video",
+            "title": "Type",
+            "default": "video"
+          },
+          "track_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Track Id"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Name"
+          },
+          "segments": {
+            "items": {
+              "$ref": "#/components/schemas/VideoSegment"
+            },
+            "type": "array",
+            "title": "Segments"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "track_id",
+          "name"
+        ],
+        "title": "VideoTrack"
       }
     }
   }

@@ -19,19 +19,19 @@ flowchart LR
     W --> S3
 ```
 
-PostgreSQL is authoritative for licensed library metadata, projects, jobs, editing sessions, immutable state versions, patches and audit events. User originals are never `Asset` or `Segment` rows: their temporary MinIO references live only in the four-hour analysis job/session context. One PostgreSQL-advisory-lock maintenance leader deletes the known expired object keys without bucket scans, redacts job payload/results and every state version, and marks the session expired. MinIO's `temporary/` lifecycle rule is the durable deletion backstop, while every local Worker job directory is removed in `finally`.
+PostgreSQL is authoritative for licensed library metadata, projects, jobs, editing sessions, immutable state versions, patches and audit events. User originals are never `Asset` or `Segment` rows: their temporary MinIO references live only in the four-hour analysis job/session context. One PostgreSQL-advisory-lock maintenance leader deletes the known expired object keys without bucket scans, redacts job payload/results, audit patch values and every state version, and marks the session expired. MinIO's `temporary/` lifecycle rule is the durable deletion backstop. Successful and non-render job runtimes are removed immediately; failed render runtimes retain bounded diagnostic evidence for 24 hours before maintenance removes them.
 
 Jobs use idempotency keys, bounded attempts, exponential backoff, leases and heartbeat renewal. An expired lease is eligible for `SKIP LOCKED` reclaim; an exhausted job becomes `dead_letter`. API cancellation is observed at every progress/checkpoint boundary. Ingestion derives asset and segment UUIDs from licensed provenance and time ranges, overwrites deterministic object keys, publishes Milvus rows only after segment analysis, and removes partial database/vector/object state when its retry budget is exhausted.
 
 ## Editing policy
 
-The source-video analyzer uses FFprobe, scene detection, ASR, FFmpeg blur measurement and frame signatures. LangGraph receives these transient source candidates plus supplemental Milvus results. After model planning, a deterministic policy requires source footage, opens on source, removes repeated shots, and trims/drops library clips until `external / total <= 0.25` unless the instruction explicitly raises the limit. The source shape plus platform intent selects 16:9, 9:16, 3:4, 4:3 or 1:1.
+The source-video analyzer uses FFprobe, scene detection, ASR, FFmpeg blur measurement and frame signatures. LangGraph receives these transient source candidates plus supplemental Milvus results and emits typed V2 domain commands. The reducer validates the resulting multi-track project and enforces user footage as the primary story, including the configured external-material ratio. The source shape plus platform intent selects 16:9, 9:16, 3:4, 4:3 or 1:1.
 
-Each graph node is emitted as a numbered SSE event and persisted in `graph_runs`; the replay endpoint accepts an event cursor. The final State Patch is written by the graph's explicit `persistence` node and remains atomic and versioned. Metadata-only title/subtitle edits follow a conditional edge that skips material retrieval. `/jobs/{id}` polling remains the recovery source of truth for analysis and render tasks.
+Each graph node is emitted as a numbered SSE event and persisted in `graph_runs`; the replay endpoint accepts an event cursor. The final command batch is written by the graph's explicit `persistence` node and remains atomic and versioned. The repository derives the RFC 6902 audit patch internally. `/jobs/{id}` polling remains the recovery source of truth for analysis and render tasks.
 
 ## State concurrency
 
-An edit request contains `base_version`. The repository computes and validates the RFC 6902-style patch, then executes a compare-and-swap update:
+An edit request contains `base_version` and typed domain commands. The reducer validates them and computes the authoritative V2 state; the repository derives an RFC 6902-style audit patch, then executes a compare-and-swap update:
 
 ```sql
 UPDATE editing_sessions

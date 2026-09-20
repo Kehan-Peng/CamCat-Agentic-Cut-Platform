@@ -4,7 +4,9 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, HttpUrl, model_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
+
+from camcat.domain.project import EditingProjectV2
 
 
 class ErrorBody(BaseModel):
@@ -119,20 +121,24 @@ class CreateEditingSessionRequest(BaseModel):
 class EditingSessionResponse(BaseModel):
     editing_session_id: UUID
     state_version: int
-    state: dict[str, Any]
+    state: EditingProjectV2
     updated_at: datetime
 
 
-class PatchOperationRequest(BaseModel):
-    op: Literal["add", "replace", "remove"]
-    path: str
-    value: Any = None
+class CommandAuditResponse(BaseModel):
+    patch_id: str
+    base_version: int
+    result_version: int
+    actor: str
+    reason: str
 
 
-class PatchEditingSessionRequest(BaseModel):
-    base_version: int = Field(ge=1)
-    operations: list[PatchOperationRequest] = Field(min_length=1, max_length=100)
-    reason: str = Field(min_length=1, max_length=1000)
+class EditCommandBatchResponse(BaseModel):
+    editing_session_id: UUID
+    state_version: int
+    state: EditingProjectV2
+    audit: CommandAuditResponse
+    updated_at: datetime
 
 
 class RollbackRequest(BaseModel):
@@ -148,12 +154,11 @@ class AgentEditRequest(BaseModel):
 
 
 class RenderRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     base_version: int = Field(ge=1)
-    resolution: Literal["1080x1920", "1920x1080", "1080x1080", "1080x1440", "1440x1080"] | None = (
-        None
-    )
-    burn_subtitles: bool = True
-    fps: Literal[24, 25, 30, 50, 60] = 30
+    renderer: Literal["ffmpeg"] = "ffmpeg"
+    quality_profile: Literal["preview", "standard", "high"] = "standard"
 
 
 class ImportOpenMediaRequest(BaseModel):
@@ -181,7 +186,7 @@ class PageResponse(BaseModel):
 
 class VersionResponse(BaseModel):
     version: int
-    document: dict[str, Any]
+    document: EditingProjectV2
     created_at: datetime
 
 

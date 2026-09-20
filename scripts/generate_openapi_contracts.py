@@ -16,6 +16,10 @@ ROOT = Path(__file__).resolve().parents[1]
 def ts_type(schema: dict[str, Any]) -> str:
     if "$ref" in schema:
         return str(schema["$ref"]).rsplit("/", 1)[-1]
+    if "const" in schema:
+        return json.dumps(schema["const"], ensure_ascii=False)
+    if "oneOf" in schema:
+        return " | ".join(ts_type(item) for item in schema["oneOf"])
     if "anyOf" in schema:
         return " | ".join(ts_type(item) for item in schema["anyOf"])
     if "enum" in schema:
@@ -35,7 +39,9 @@ def ts_type(schema: dict[str, Any]) -> str:
             return "Record<string, unknown>"
         required = set(schema.get("required", []))
         fields = [
-            f"  {json.dumps(name)}{'?' if name not in required else ''}: {ts_type(value)};"
+            f"  {json.dumps(name)}"
+            f"{'?' if name not in required and 'const' not in value else ''}: "
+            f"{ts_type(value)};"
             for name, value in properties.items()
         ]
         return "{\n" + "\n".join(fields) + "\n}"

@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 pytestmark = pytest.mark.integration
 
 
-def test_project_session_patch_conflict_audit_and_soft_delete_journey() -> None:
+def test_project_session_command_conflict_audit_and_soft_delete_journey() -> None:
     with TestClient(app, raise_server_exceptions=False) as client:
         project = client.post("/api/v1/projects", json={"name": f"integration-{uuid4()}"})
         assert project.status_code == 201
@@ -26,23 +26,23 @@ def test_project_session_patch_conflict_audit_and_soft_delete_journey() -> None:
         assert created.status_code == 201
         session_id = created.json()["editing_session_id"]
 
-        updated = client.patch(
-            f"/api/v1/editing/sessions/{session_id}",
+        updated = client.post(
+            f"/api/v1/editing/sessions/{session_id}/commands",
             json={
                 "base_version": 1,
-                "operations": [{"op": "replace", "path": "/title", "value": "v2"}],
-                "reason": "integration patch",
+                "commands": [{"type": "update_title", "title": "v2"}],
+                "reason": "integration command",
             },
         )
         assert updated.status_code == 200
         assert updated.json()["state_version"] == 2
 
-        conflict = client.patch(
-            f"/api/v1/editing/sessions/{session_id}",
+        conflict = client.post(
+            f"/api/v1/editing/sessions/{session_id}/commands",
             json={
                 "base_version": 1,
-                "operations": [{"op": "replace", "path": "/title", "value": "stale"}],
-                "reason": "stale patch",
+                "commands": [{"type": "update_title", "title": "stale"}],
+                "reason": "stale command",
             },
         )
         assert conflict.status_code == 409

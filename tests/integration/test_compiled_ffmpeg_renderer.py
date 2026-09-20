@@ -6,11 +6,26 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
+from camcat.domain.project import (
+    AudioSegment,
+    AudioTrack,
+    Canvas,
+    EditingProjectV2,
+    MediaSourceRef,
+    TextSegment,
+    TextTrack,
+    TimelineV2,
+    Transform,
+    TransitionEdge,
+    VideoSegment,
+    VideoTrack,
+)
 from camcat.rendering.build import RenderBuildService
+from camcat.rendering.doctor import inspect_capabilities
 from camcat.rendering.ffmpeg_renderer import FFmpegRenderer
 from camcat.rendering.fingerprint import fingerprint_media
-from camcat.rendering.verification import VerificationLevel, verify_output
-from camcat.timeline.compiler import TimelineCompiler
+from camcat.rendering.verification import verify_output
+from camcat.timeline.compiler import TimelineCompilerV2
 from camcat.timeline.schemas import RenderProfile
 
 pytestmark = [
@@ -22,7 +37,7 @@ pytestmark = [
 ]
 
 
-def generate_video(path: Path, *, color: str, frequency: int) -> None:
+def _video(path: Path, color: str, tone: int) -> None:
     subprocess.run(
         [
             "ffmpeg",
@@ -36,7 +51,7 @@ def generate_video(path: Path, *, color: str, frequency: int) -> None:
             "-f",
             "lavfi",
             "-i",
-            f"sine=frequency={frequency}:sample_rate=48000:duration=2",
+            f"sine=frequency={tone}:sample_rate=48000:duration=2",
             "-shortest",
             "-c:v",
             "libx264",
@@ -50,7 +65,7 @@ def generate_video(path: Path, *, color: str, frequency: int) -> None:
     )
 
 
-def generate_audio(path: Path, *, frequency: int, duration: float) -> None:
+def _audio(path: Path, tone: int) -> None:
     subprocess.run(
         [
             "ffmpeg",
@@ -60,7 +75,7 @@ def generate_audio(path: Path, *, frequency: int, duration: float) -> None:
             "-f",
             "lavfi",
             "-i",
-            f"sine=frequency={frequency}:sample_rate=48000:duration={duration}",
+            f"sine=frequency={tone}:sample_rate=48000:duration=3",
             "-c:a",
             "aac",
             str(path),
@@ -69,94 +84,145 @@ def generate_audio(path: Path, *, frequency: int, duration: float) -> None:
     )
 
 
-def test_two_clip_crossfade_subtitle_and_audio_render_is_verified(tmp_path: Path) -> None:
-    first = tmp_path / "first.mp4"
-    second = tmp_path / "second.mp4"
-    bgm = tmp_path / "bgm.m4a"
-    sfx = tmp_path / "sfx.m4a"
-    generate_video(first, color="red", frequency=440)
-    generate_video(second, color="blue", frequency=660)
-    generate_audio(bgm, frequency=220, duration=3)
-    generate_audio(sfx, frequency=880, duration=0.4)
-
-    sources = {
-        "first": fingerprint_media(first, media_id="first", storage_key="test/first.mp4"),
-        "second": fingerprint_media(second, media_id="second", storage_key="test/second.mp4"),
-        "bgm": fingerprint_media(bgm, media_id="bgm", storage_key="test/bgm.m4a"),
-        "sfx": fingerprint_media(sfx, media_id="sfx", storage_key="test/sfx.m4a"),
-    }
-    profile = RenderProfile(width=320, height=180, fps_num=30, default_dissolve_duration_ms=200)
-    timeline = TimelineCompiler(profile).compile(
-        session_id=UUID("00000000-0000-0000-0000-000000000001"),
-        state_version=7,
-        document={
-            "clips": [
-                {
-                    "clip_id": "one",
-                    "segment_id": "one",
-                    "origin": "source",
-                    "media_id": "first",
-                    "source_start": 0.3,
-                    "source_end": 1.3,
-                    "transition": "dissolve",
-                },
-                {
-                    "clip_id": "two",
-                    "segment_id": "two",
-                    "origin": "source",
-                    "media_id": "second",
-                    "source_start": 0.3,
-                    "source_end": 1.3,
-                    "transition": "cut",
-                },
-            ],
-            "subtitles": [
-                {
-                    "subtitle_id": "subtitle",
-                    "text": "CamCat compiled",
-                    "clip_id": "one",
-                    "source_id": "first",
-                    "source_start": 0.4,
-                    "source_end": 1.0,
-                }
-            ],
-            "audio_plan": {
-                "bgm": [
-                    {
-                        "cue_id": "music",
-                        "media_id": "bgm",
-                        "target_start": 0,
-                        "target_duration": 1.8,
-                        "volume": 0.08,
-                        "fade_in_frames": 3,
-                        "fade_out_frames": 3,
-                    }
-                ],
-                "ambient": [],
-                "sound_effects": [
-                    {
-                        "cue_id": "effect",
-                        "media_id": "sfx",
-                        "target_start": 0.6,
-                        "target_duration": 0.3,
-                        "volume": 0.25,
-                    }
-                ],
-            },
-        },
-        sources=sources,
+def test_v2_background_overlay_text_dialogue_bgm_and_dissolve_render_exact_frames(
+    tmp_path: Path,
+) -> None:
+    first, second, overlay, bgm = (
+        tmp_path / name for name in ("first.mp4", "second.mp4", "overlay.mp4", "bgm.m4a")
     )
-    assert timeline.frame_count == 54
-    build = RenderBuildService(renderer_version=FFmpegRenderer.VERSION).create(
-        tmp_path / "build", timeline=timeline, profile=profile
+    _video(first, "red", 440)
+    _video(second, "blue", 550)
+    _video(overlay, "green", 660)
+    _audio(bgm, 220)
+    sources = {
+        name: fingerprint_media(path, media_id=name, storage_key=f"test/{path.name}")
+        for name, path in {"first": first, "second": second, "overlay": overlay, "bgm": bgm}.items()
+    }
+    refs = [
+        MediaSourceRef(
+            source_id=name,
+            origin="licensed_library",
+            storage_key=f"test/{item.local_path.name}",
+            retention_class="library",
+        )
+        for name, item in sources.items()
+    ]
+    project = EditingProjectV2(
+        project_id="p",
+        goal="integration",
+        title="V2",
+        canvas=Canvas(width=320, height=180, fps_num=30, fps_den=1),
+        sources=refs,
+        timeline=TimelineV2(
+            tracks=[
+                VideoTrack(
+                    track_id="main",
+                    name="Main",
+                    segments=[
+                        VideoSegment(
+                            segment_id="one",
+                            source_id="first",
+                            timeline_start_us=0,
+                            timeline_duration_us=1_000_000,
+                            source_start_us=300_000,
+                            source_duration_us=1_000_000,
+                        ),
+                        VideoSegment(
+                            segment_id="two",
+                            source_id="second",
+                            timeline_start_us=1_000_000,
+                            timeline_duration_us=1_000_000,
+                            source_start_us=300_000,
+                            source_duration_us=1_000_000,
+                        ),
+                    ],
+                ),
+                VideoTrack(
+                    track_id="overlay-track",
+                    name="Overlay",
+                    segments=[
+                        VideoSegment(
+                            segment_id="overlay-segment",
+                            source_id="overlay",
+                            timeline_start_us=400_000,
+                            timeline_duration_us=800_000,
+                            source_start_us=300_000,
+                            source_duration_us=800_000,
+                            transform=Transform(
+                                x=0.2, y=-0.2, scale_x=0.35, scale_y=0.35, opacity=0.75
+                            ),
+                        )
+                    ],
+                ),
+                TextTrack(
+                    track_id="captions",
+                    name="Captions",
+                    segments=[
+                        TextSegment(
+                            segment_id="caption",
+                            start_us=400_000,
+                            duration_us=800_000,
+                            text="CamCat V2",
+                        )
+                    ],
+                ),
+                AudioTrack(
+                    track_id="dialogue",
+                    name="Dialogue",
+                    role="dialogue",
+                    segments=[
+                        AudioSegment(
+                            segment_id="dialogue-one",
+                            source_id="first",
+                            timeline_start_us=0,
+                            timeline_duration_us=1_000_000,
+                            source_start_us=300_000,
+                            source_duration_us=1_000_000,
+                        )
+                    ],
+                ),
+                AudioTrack(
+                    track_id="music",
+                    name="BGM",
+                    role="bgm",
+                    segments=[
+                        AudioSegment(
+                            segment_id="music-one",
+                            source_id="bgm",
+                            timeline_start_us=0,
+                            timeline_duration_us=2_000_000,
+                            source_start_us=0,
+                            source_duration_us=2_000_000,
+                            volume=0.08,
+                        )
+                    ],
+                ),
+            ],
+            transitions=[
+                TransitionEdge(
+                    transition_id="fade",
+                    left_segment_id="one",
+                    right_segment_id="two",
+                    type="dissolve",
+                    duration_us=200_000,
+                )
+            ],
+        ),
+    )
+    profile = RenderProfile()
+    timeline = TimelineCompilerV2(profile).compile(
+        session_id=UUID(int=1), state_version=7, project=project, sources=sources
+    )
+    assert timeline.frame_count == 60
+    build = RenderBuildService().create(
+        tmp_path / "build",
+        timeline=timeline,
+        profile=profile,
+        capability=inspect_capabilities(tmp_path / "runtime"),
     )
     output = tmp_path / "render.mp4"
-    FFmpegRenderer().render(build, output)
+    FFmpegRenderer().render(build, sources, output)
     result = verify_output(build, output)
-
-    assert result.status == VerificationLevel.EDITORIAL_QC_PENDING
-    assert result.expected_frames == 54
-    assert abs(result.frame_delta) <= 1
-    assert result.full_decode_succeeds
-    assert result.width == 320 and result.height == 180
-    assert result.audio_stream_expected and result.audio_stream_actual
+    assert result.actual_frames == result.expected_frames == 60
+    assert (result.width, result.height) == (320, 180)
+    assert result.audio_stream_actual and result.full_decode_succeeds and result.output_sha256

@@ -25,10 +25,12 @@ test("idle workspace exposes an explicit real-data empty state", () => {
   assert.match(source, /上传视频或输入多模态检索需求/);
 });
 
-test("editor exposes automatic output ratio instead of hard-coding 9:16", () => {
+test("editor reads output geometry from the authoritative canvas", () => {
   assert.equal(source.includes('label="9:16"'), false);
   assert.equal(source.includes("\n          9:16\n"), false);
-  assert.match(source, /Auto.*aspect_ratio/s);
+  assert.match(source, /canvasRatio/);
+  assert.match(source, /state\.canvas/);
+  assert.doesNotMatch(source, /state\.settings/);
   assert.match(source, /multiple onChange=\{onFileChange\}/);
 });
 

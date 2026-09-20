@@ -22,6 +22,17 @@ import {
 type ProjectWithSessions = ProjectResponse & { sessions: EditingSessionResponse[] };
 type OpenWorkspace = { project: ProjectResponse; session?: EditingSessionResponse; page?: ProductPage };
 
+function sourceMedia(session?: EditingSessionResponse): Array<{ playback_url?: string }> {
+  return (session?.state.metadata?.source_media ?? []) as Array<{ playback_url?: string }>;
+}
+
+function videoSegmentCount(session?: EditingSessionResponse): number {
+  const tracks = (session?.state.timeline?.tracks ?? []) as Array<{ type?: string; segments?: unknown[] }>;
+  return tracks
+    .filter((track) => track.type === "video")
+    .reduce((count, track) => count + (track.segments?.length ?? 0), 0);
+}
+
 export default function CamCatApp() {
   const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env ?? {};
   const apiBase = env.VITE_CAMCAT_API_BASE || "";
@@ -74,7 +85,7 @@ export default function CamCatApp() {
   }
 
   function openProductPage(page: ProductPage) {
-    const project = projects.find((candidate) => candidate.sessions.some((session) => (session.state.source_media?.length ?? 0) > 0)) ?? projects[0];
+    const project = projects.find((candidate) => candidate.sessions.some((session) => sourceMedia(session).length > 0)) ?? projects[0];
     if (!project) return;
     const session = [...project.sessions].sort((a, b) => Date.parse(b.updated_at ?? "") - Date.parse(a.updated_at ?? ""))[0];
     setOpenWorkspace({ project, session, page });
@@ -182,8 +193,8 @@ function ProjectHomePage({
 function ProjectCard({ project, index, onOpen, onDeleteSession }: { project: ProjectWithSessions; index: number; onOpen: (project: ProjectResponse, session?: EditingSessionResponse) => void; onDeleteSession: (projectId: string, sessionId: string) => void }) {
   const [expanded, setExpanded] = useState(false);
   const latest = [...project.sessions].sort((a, b) => Date.parse(b.updated_at ?? "") - Date.parse(a.updated_at ?? ""))[0];
-  const clipCount = latest?.state.clips?.length ?? 0;
-  const previewUrl = latest?.state.source_media?.[0]?.playback_url;
+  const clipCount = videoSegmentCount(latest);
+  const previewUrl = sourceMedia(latest)[0]?.playback_url;
   const gradient = ["from-[#1d2730] via-[#101d22] to-[#171416]", "from-[#1a2631] via-[#10151d] to-[#172018]", "from-[#241c2b] via-[#14151c] to-[#111e22]"][index % 3];
   return (
     <article className="overflow-hidden rounded-[18px] border border-[#262b2f] bg-[linear-gradient(105deg,rgba(24,26,28,0.96),rgba(12,13,14,0.96))] shadow-[0_18px_50px_rgba(0,0,0,0.24)]">

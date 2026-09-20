@@ -1,119 +1,126 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from uuid import UUID
 
-import camcat.rendering.fingerprint as fingerprint_module
 import pytest
-from camcat.rendering.build import BuildVerificationError, RenderBuildService, verify_render_build
-from camcat.timeline.compiler import TimelineCompiler
-from camcat.timeline.schemas import MediaFingerprint, RenderProfile
+from camcat.domain.project import (
+    Canvas,
+    EditingProjectV2,
+    MediaSourceRef,
+    TimelineV2,
+    VideoSegment,
+    VideoTrack,
+)
+from camcat.rendering.build import (
+    BuildVerificationError,
+    RenderBuildService,
+    verify_materialized_sources,
+)
+from camcat.rendering.doctor import RendererCapabilityProfile
+from camcat.rendering.materialization import MaterializedMedia
+from camcat.timeline.compiler import TimelineCompilerV2
+from camcat.timeline.schemas import BuildMediaRef, RenderProfile
 
 
-def source(path: Path, *, sha256: str, media_id: str = "source") -> MediaFingerprint:
-    return MediaFingerprint(
-        media_id=media_id,
-        storage_key=f"temporary/{media_id}.mp4",
-        local_path=str(path),
-        sha256=sha256,
-        file_size=path.stat().st_size,
+def _materialized(path: Path) -> MaterializedMedia:
+    ref = BuildMediaRef(
+        media_id="source",
+        storage_key="library/source.mp4",
+        sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+        size=path.stat().st_size,
         duration_us=2_000_000,
         width=640,
         height=360,
         video_codec="h264",
-        audio_codec=None,
+        audio_codec="aac",
+        retention_class="library",
+    )
+    return MaterializedMedia(ref=ref, local_path=path)
+
+
+def _timeline(source: MaterializedMedia, profile: RenderProfile):
+    project = EditingProjectV2(
+        project_id="p",
+        goal="g",
+        title="t",
+        canvas=Canvas(width=640, height=360, fps_num=30, fps_den=1),
+        sources=[
+            MediaSourceRef(
+                source_id="source",
+                origin="licensed_library",
+                storage_key="library/source.mp4",
+                retention_class="library",
+            )
+        ],
+        timeline=TimelineV2(
+            tracks=[
+                VideoTrack(
+                    track_id="main",
+                    name="Main",
+                    segments=[
+                        VideoSegment(
+                            segment_id="v1",
+                            source_id="source",
+                            timeline_start_us=0,
+                            timeline_duration_us=1_000_000,
+                            source_start_us=0,
+                            source_duration_us=1_000_000,
+                        )
+                    ],
+                )
+            ]
+        ),
+    )
+    return TimelineCompilerV2(profile).compile(
+        session_id=UUID(int=1), state_version=1, project=project, sources={"source": source}
     )
 
 
-@pytest.fixture(autouse=True)
-def fake_probe(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        fingerprint_module,
-        "probe_json",
-        lambda _path: {"format": {"duration": "2.0"}},
+def _capability(version: str = "v2") -> RendererCapabilityProfile:
+    return RendererCapabilityProfile(
+        ffmpeg_version="ffmpeg test",
+        ffprobe_version="ffprobe test",
+        encoders=["libx264", "aac"],
+        filters=["ass", "overlay", "xfade", "eq", "loudnorm", "amix"],
+        platform="test",
+        renderer_implementation_version=version,
+        runtime_directory_writable=True,
+        object_store_reachable=True,
     )
 
 
-def make_timeline(path: Path, sha256: str):
-    profile = RenderProfile(width=640, height=360, fps_num=30)
-    fingerprint = source(path, sha256=sha256)
-    timeline = TimelineCompiler(profile).compile(
-        session_id=UUID("00000000-0000-0000-0000-000000000001"),
-        state_version=3,
-        document={
-            "clips": [
-                {
-                    "clip_id": "clip-1",
-                    "segment_id": "segment-1",
-                    "origin": "source",
-                    "media_id": "source",
-                    "source_start": 0,
-                    "source_end": 1,
-                    "transition": "cut",
-                }
-            ],
-            "subtitles": [
-                {
-                    "subtitle_id": "s1",
-                    "text": "hello",
-                    "clip_id": "clip-1",
-                    "source_id": "source",
-                    "source_start": 0,
-                    "source_end": 1,
-                }
-            ],
-            "audio_plan": {"bgm": [], "ambient": [], "sound_effects": []},
-        },
-        sources={"source": fingerprint},
+def test_persistent_build_has_no_local_path_and_digest_is_deterministic(tmp_path: Path) -> None:
+    path = tmp_path / "source.mp4"
+    path.write_bytes(b"media")
+    source = _materialized(path)
+    profile = RenderProfile()
+    timeline = _timeline(source, profile)
+    first = RenderBuildService().create(
+        tmp_path / "one", timeline=timeline, profile=profile, capability=_capability()
     )
-    return profile, timeline
-
-
-def test_render_build_is_content_bound_and_verifiable(tmp_path: Path) -> None:
-    media = tmp_path / "source.mp4"
-    media.write_bytes(b"unchanged-media")
-    import hashlib
-
-    profile, timeline = make_timeline(media, hashlib.sha256(media.read_bytes()).hexdigest())
-    build = RenderBuildService(renderer_version="test-renderer/v1").create(
-        tmp_path / "build", timeline=timeline, profile=profile
+    second = RenderBuildService().create(
+        tmp_path / "two", timeline=timeline, profile=profile, capability=_capability()
     )
-
-    verified = verify_render_build(build.root)
-    assert verified.manifest.compiled_timeline_hash == timeline.compiled_hash
-    assert verified.manifest.state_version == 3
-    assert (build.root / "compiled-timeline.json").is_file()
-    assert (build.root / "source-manifest.json").is_file()
-    assert (build.root / "render-profile.json").is_file()
-    assert (build.root / "subtitles.srt").is_file()
+    assert "local_path" not in (first.root / "source-manifest.json").read_text()
+    assert first.manifest.build_input_digest == second.manifest.build_input_digest
+    assert first.manifest.build_instance_hash != second.manifest.build_instance_hash
 
 
-def test_modified_source_fails_build_verification(tmp_path: Path) -> None:
-    media = tmp_path / "source.mp4"
-    media.write_bytes(b"before")
-    import hashlib
-
-    profile, timeline = make_timeline(media, hashlib.sha256(media.read_bytes()).hexdigest())
-    build = RenderBuildService(renderer_version="test-renderer/v1").create(
-        tmp_path / "build", timeline=timeline, profile=profile
+def test_source_change_fails_and_capability_changes_input_digest(tmp_path: Path) -> None:
+    path = tmp_path / "source.mp4"
+    path.write_bytes(b"media")
+    source = _materialized(path)
+    profile = RenderProfile()
+    timeline = _timeline(source, profile)
+    first = RenderBuildService().create(
+        tmp_path / "one", timeline=timeline, profile=profile, capability=_capability()
     )
-    media.write_bytes(b"after")
-
-    with pytest.raises(BuildVerificationError, match="source fingerprint"):
-        verify_render_build(build.root)
-
-
-def test_modified_compiled_timeline_fails_manifest_verification(tmp_path: Path) -> None:
-    media = tmp_path / "source.mp4"
-    media.write_bytes(b"source")
-    import hashlib
-
-    profile, timeline = make_timeline(media, hashlib.sha256(media.read_bytes()).hexdigest())
-    build = RenderBuildService(renderer_version="test-renderer/v1").create(
-        tmp_path / "build", timeline=timeline, profile=profile
+    second = RenderBuildService().create(
+        tmp_path / "two", timeline=timeline, profile=profile, capability=_capability("v3")
     )
-    compiled = build.root / "compiled-timeline.json"
-    compiled.write_text(compiled.read_text().replace("hello", "tampered"), encoding="utf-8")
-
-    with pytest.raises(BuildVerificationError, match="build file manifest"):
-        verify_render_build(build.root)
+    assert first.manifest.build_input_digest != second.manifest.build_input_digest
+    path.write_bytes(b"changed")
+    with pytest.raises(BuildVerificationError, match="changed"):
+        verify_materialized_sources(first, {"source": source})

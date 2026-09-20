@@ -43,6 +43,7 @@ import {
   waitForJob,
   type AgenticSearchResponse,
   type AuditEvent,
+  type DomainEditCommand,
   type EditingSessionResponse,
   type JobResponse,
   type ProjectResponse,
@@ -51,6 +52,7 @@ import {
   type UploadedVideoResponse,
   type WorkspaceTraceRow,
 } from "./src/camcatApi";
+import type { AudioTrack, TextTrack, VideoTrack } from "./src/generated/api";
 
 type EvidenceKind = "video" | "doc" | "image";
 
@@ -76,6 +78,48 @@ type TimelineClip = {
   end: number;
   tone?: "neutral" | "blue" | "green";
 };
+
+type TimelineTrack = VideoTrack | TextTrack | AudioTrack;
+
+function selectTracks(session?: EditingSessionResponse): TimelineTrack[] {
+  return session?.state.timeline?.tracks ?? [];
+}
+
+function selectVideoTracks(session?: EditingSessionResponse): VideoTrack[] {
+  return selectTracks(session).filter((track): track is VideoTrack => track.type === "video");
+}
+
+function selectPrimaryVideoSegments(session?: EditingSessionResponse) {
+  return selectVideoTracks(session)[0]?.segments ?? [];
+}
+
+function selectTextSegments(session?: EditingSessionResponse) {
+  return selectTracks(session)
+    .filter((track): track is TextTrack => track.type === "text")
+    .flatMap((track) => track.segments ?? []);
+}
+
+function selectSourceMedia(session?: EditingSessionResponse): SourceUploadResponse["media"] {
+  return (session?.state.metadata?.source_media ?? []) as SourceUploadResponse["media"];
+}
+
+function canvasRatio(session?: EditingSessionResponse) {
+  const width = session?.state.canvas?.width;
+  const height = session?.state.canvas?.height;
+  if (!width || !height) return "Auto";
+  const divisor = (a: number, b: number): number => (b ? divisor(b, a % b) : a);
+  const common = divisor(width, height);
+  return `${width / common}:${height / common}`;
+}
+
+function semanticDurationSeconds(session?: EditingSessionResponse): number {
+  const endUs = selectPrimaryVideoSegments(session).reduce((maximum, segment) => {
+    const startUs = Number(segment.timeline_start_us ?? 0);
+    const durationUs = Number(segment.timeline_duration_us ?? 0);
+    return Math.max(maximum, startUs + durationUs);
+  }, 0);
+  return endUs / 1_000_000;
+}
 
 type WorkspaceStatus = "idle" | "uploading" | "searching" | "rendering" | "ready" | "error";
 export type ProductPage = "editing" | "processing" | "render";
@@ -116,6 +160,7 @@ type WorkspaceController = {
   handleReorderClip: (sourceId: string, targetId: string) => Promise<void>;
   handleTrimClip: (clipId: string) => Promise<void>;
   handleSplitClip: (clipId: string) => Promise<void>;
+  handleRemoveSegment: (segmentId: string) => Promise<void>;
   showEditingPage: () => void;
   showProcessingPage: () => void;
   showRenderPage: () => void;
@@ -167,8 +212,8 @@ function useWorkspaceController({ project, initialSession, initialPage = "editin
   const [progressLabel, setProgressLabel] = useState<string>();
   const [searchDepth, setSearchDepth] = useState<"instant" | "deep">("instant");
   const [analysisMode, setAnalysisMode] = useState<"keyframes" | "per-second">("keyframes");
-  const initialSourceMedia = initialSession?.state.source_media ?? [];
-  const initialSourceSegments = initialSession?.state.source_segments ?? [];
+  const initialSourceMedia = selectSourceMedia(initialSession);
+  const initialSourceSegments = (initialSession?.state.metadata?.source_segments ?? []) as Array<Record<string, unknown>>;
   const [selectedEvidenceId, setSelectedEvidenceId] = useState<string | undefined>(initialSourceMedia[0]?.media_id);
   const [uploadedVideo, setUploadedVideo] = useState<UploadedVideoResponse | undefined>(() => {
     const first = initialSourceMedia[0];
@@ -195,7 +240,7 @@ function useWorkspaceController({ project, initialSession, initialPage = "editin
 
   const runView = useMemo(() => (agentRun ? mapAgenticRunToWorkspace(agentRun) : undefined), [agentRun]);
   const evidence = useMemo<EvidenceItem[]>(() => {
-    const sourceMedia = sourceUpload?.media ?? editingSession?.state.source_media ?? [];
+    const sourceMedia = sourceUpload?.media ?? selectSourceMedia(editingSession);
     const uploadedEvidence: EvidenceItem[] = sourceMedia.length
       ? sourceMedia.map((media, index) => ({
           id: media.media_id,
@@ -215,7 +260,7 @@ function useWorkspaceController({ project, initialSession, initialPage = "editin
           active: selectedEvidenceId ? item.id === selectedEvidenceId : index === 0,
         }))
       : uploadedEvidence;
-  }, [editingSession?.state.source_media, runView, selectedEvidenceId, sourceUpload]);
+  }, [editingSession?.state.metadata, runView, selectedEvidenceId, sourceUpload]);
 
   const traceRows = useMemo<WorkspaceTraceRow[]>(() => {
     const rows = runView?.trace.length ? runView.trace : [];
@@ -233,7 +278,7 @@ function useWorkspaceController({ project, initialSession, initialPage = "editin
     return [...liveTraceRows, ...rows];
   }, [liveTraceRows, runView, uploadedVideo]);
 
-  const canRender = Boolean(runView?.selectedSegment?.video_id || editingSession?.state.clips?.length);
+  const canRender = Boolean(runView?.selectedSegment?.video_id || selectPrimaryVideoSegments(editingSession).length);
 
   async function handleUpload(files: File[]) {
     if (!files.length) return;
@@ -328,7 +373,7 @@ function useWorkspaceController({ project, initialSession, initialPage = "editin
       const audit = await api.getEditingSessionAudit(result.editingSession.editing_session_id);
       setAuditEvents(audit.items);
       setSelectedEvidenceId(result.agentRun.ranked_segments?.[0]?.segment_id);
-      setProgressLabel("剪辑计划已通过 State Patch 写入");
+      setProgressLabel("剪辑领域命令已持久化为新版本");
       setStatus("ready");
     } catch (caught) {
       setError(errorMessage(caught));
@@ -470,12 +515,12 @@ function useWorkspaceController({ project, initialSession, initialPage = "editin
     }
   }
 
-  async function persistClips(clips: Array<Record<string, unknown>>, reason: string) {
+  async function persistCommands(commands: DomainEditCommand[], reason: string) {
     if (!editingSession) return;
-    const updated = await api.patchEditingSession(
+    const updated = await api.applyEditCommands(
       editingSession.editing_session_id,
       editingSession.state_version,
-      [{ op: "replace", path: "/clips", value: clips }],
+      commands,
       reason,
     );
     setEditingSession(updated);
@@ -484,41 +529,44 @@ function useWorkspaceController({ project, initialSession, initialPage = "editin
   }
 
   async function handleReorderClip(sourceId: string, targetId: string) {
-    const clips = [...(editingSession?.state.clips ?? [])];
-    const sourceIndex = clips.findIndex((clip) => String(clip.clip_id) === sourceId);
-    const targetIndex = clips.findIndex((clip) => String(clip.clip_id) === targetId);
+    const track = selectVideoTracks(editingSession)[0];
+    const clips = track?.segments ?? [];
+    const sourceIndex = clips.findIndex((clip) => String(clip.segment_id) === sourceId);
+    const targetIndex = clips.findIndex((clip) => String(clip.segment_id) === targetId);
     if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) return;
-    const [moved] = clips.splice(sourceIndex, 1);
-    clips.splice(targetIndex, 0, moved);
-    await persistClips(clips, "timeline drag reorder");
+    await persistCommands(
+      [{ type: "move_segment", track_id: String(track.track_id), segment_id: sourceId, before_segment_id: targetId }],
+      "timeline drag reorder",
+    );
   }
 
   async function handleTrimClip(clipId: string) {
-    const clips = (editingSession?.state.clips ?? []).map((clip) => ({ ...clip }));
-    const clip = clips.find((item) => String(item.clip_id) === clipId);
+    const clip = selectPrimaryVideoSegments(editingSession).find((item) => String(item.segment_id) === clipId);
     if (!clip) return;
-    const start = Number(clip.source_start);
-    const end = Number(clip.source_end);
-    clip.source_end = Math.max(start + 0.2, end - 0.5);
-    await persistClips(clips, "timeline trim clip tail");
+    const duration = Number(clip.source_duration_us);
+    await persistCommands(
+      [{ type: "trim_segment", segment_id: clipId, source_start_us: Number(clip.source_start_us), source_duration_us: Math.max(200_000, duration - 500_000) }],
+      "timeline trim segment tail",
+    );
   }
 
   async function handleSplitClip(clipId: string) {
-    const clips = (editingSession?.state.clips ?? []).map((clip) => ({ ...clip }));
-    const index = clips.findIndex((item) => String(item.clip_id) === clipId);
-    if (index < 0) return;
-    const clip = clips[index];
-    const start = Number(clip.source_start);
-    const end = Number(clip.source_end);
-    if (end - start < 0.4) return;
-    const middle = (start + end) / 2;
-    clips.splice(
-      index,
-      1,
-      { ...clip, clip_id: `${clipId}-a`, source_end: middle },
-      { ...clip, clip_id: `${clipId}-b`, source_start: middle },
+    const clip = selectPrimaryVideoSegments(editingSession).find((item) => String(item.segment_id) === clipId);
+    if (!clip || Number(clip.source_duration_us) < 400_000) return;
+    const middle = Number(clip.source_start_us) + Math.round(Number(clip.source_duration_us) / 2);
+    await persistCommands(
+      [{ type: "split_segment", segment_id: clipId, at_source_us: middle, right_segment_id: crypto.randomUUID() }],
+      "timeline split segment",
     );
-    await persistClips(clips, "timeline split clip");
+  }
+
+  async function handleRemoveSegment(segmentId: string) {
+    const track = selectVideoTracks(editingSession)[0];
+    if (!track) return;
+    await persistCommands(
+      [{ type: "remove_segment", track_id: String(track.track_id), segment_id: segmentId }],
+      "timeline remove segment",
+    );
   }
 
   function handleSelectEvidence(item: EvidenceItem) {
@@ -562,6 +610,7 @@ function useWorkspaceController({ project, initialSession, initialPage = "editin
     handleReorderClip,
     handleTrimClip,
     handleSplitClip,
+    handleRemoveSegment,
     showEditingPage: () => setPage("editing"),
     showProcessingPage: () => setPage("processing"),
     showRenderPage: () => setPage("render"),
@@ -637,7 +686,7 @@ function MediaProcessingPage({ workspace }: { workspace: WorkspaceController }) 
           <div className="flex items-center justify-between border-b border-[#22262a] pb-5">
             <div>
               <div className="text-[11px] font-semibold tracking-[0.18em] text-[#737d87]">MEDIA PIPELINE</div>
-              <h2 className="mt-2 text-xl font-semibold text-white">{workspace.sourceUpload?.media[0]?.filename ?? workspace.editingSession?.state.source_media?.[0]?.filename ?? "准备接收原片"}</h2>
+              <h2 className="mt-2 text-xl font-semibold text-white">{workspace.sourceUpload?.media[0]?.filename ?? selectSourceMedia(workspace.editingSession)[0]?.filename ?? "准备接收原片"}</h2>
             </div>
             <JobStatusBadge status={job?.status ?? workspace.status} />
           </div>
@@ -677,7 +726,7 @@ function MediaProcessingPage({ workspace }: { workspace: WorkspaceController }) 
             <dt className="text-[#707983]">任务 ID</dt><dd className="truncate font-mono text-[#d7dde2]">{job?.job_id ?? (complete ? "历史任务已完成" : "等待创建")}</dd>
             <dt className="text-[#707983]">任务类型</dt><dd className="text-[#d7dde2]">{job?.kind ?? "analyze_source"}</dd>
             <dt className="text-[#707983]">尝试次数</dt><dd className="text-[#d7dde2]">{job ? `${job.attempts}/${job.max_attempts}` : "0/3"}</dd>
-            <dt className="text-[#707983]">媒体数量</dt><dd className="text-[#d7dde2]">{workspace.sourceUpload?.media.length ?? workspace.editingSession?.state.source_media?.length ?? 0}</dd>
+            <dt className="text-[#707983]">媒体数量</dt><dd className="text-[#d7dde2]">{workspace.sourceUpload?.media.length ?? selectSourceMedia(workspace.editingSession).length}</dd>
             <dt className="text-[#707983]">分析镜头</dt><dd className="text-[#d7dde2]">{workspace.uploadedVideo?.segment_count ?? (job?.result?.segment_count === undefined ? "处理中" : String(job.result.segment_count))}</dd>
             <dt className="text-[#707983]">保留策略</dt><dd className="text-[#34d399]">transient-4h-no-asset-no-milvus</dd>
           </dl>
@@ -703,7 +752,7 @@ function RenderStatusPage({ workspace }: { workspace: WorkspaceController }) {
   const outputUrl = output?.output_url;
   const resolution = output?.width && output?.height
     ? `${output.width} × ${output.height}`
-    : String(workspace.editingSession?.state.settings?.aspect_ratio ?? "自动画幅");
+    : canvasRatio(workspace.editingSession);
   return (
     <ProductPageFrame title="导出 / 渲染状态" subtitle={workspace.project?.name ?? "CamCat 项目"}>
       <div className="min-h-0 flex-1 px-8 pb-8">
@@ -726,8 +775,8 @@ function RenderStatusPage({ workspace }: { workspace: WorkspaceController }) {
               <dl className="mt-8 grid grid-cols-[110px_1fr] gap-y-5 border-t border-[#22262a] pt-7 text-[14px]">
                 <dt className="text-[#707983]">状态版本</dt><dd className="text-white">v{workspace.editingSession?.state_version ?? 1}</dd>
                 <dt className="text-[#707983]">输出画幅</dt><dd className="text-white">{resolution}</dd>
-                <dt className="text-[#707983]">时长</dt><dd className="text-white">{output?.duration_seconds ? `${output.duration_seconds.toFixed(2)} 秒` : `${Number(workspace.editingSession?.state.target_duration ?? 0).toFixed(1)} 秒`}</dd>
-                <dt className="text-[#707983]">字幕</dt><dd className="text-white">{output?.subtitle_url ? "SRT 已生成并烧录" : "根据剪辑计划烧录"}</dd>
+                <dt className="text-[#707983]">时长</dt><dd className="text-white">{output?.duration_seconds ? `${output.duration_seconds.toFixed(2)} 秒` : `${semanticDurationSeconds(workspace.editingSession).toFixed(1)} 秒`}</dd>
+                <dt className="text-[#707983]">字幕</dt><dd className="text-white">{output?.subtitle_url ? "ASS 已生成并烧录" : "根据文字轨烧录"}</dd>
                 <dt className="text-[#707983]">处理器</dt><dd className="font-mono text-white">FFmpeg / ffprobe</dd>
                 <dt className="text-[#707983]">技术验证</dt><dd className="text-white">{String(output?.verification_status ?? "等待验证")}</dd>
                 <dt className="text-[#707983]">帧差</dt><dd className="font-mono text-white">{String(output?.frame_delta ?? "—")}</dd>
@@ -947,7 +996,7 @@ function EvidencePanel({ workspace }: { workspace: WorkspaceController }) {
     ? workspace.evidence.filter((item) => item.kind === "video")
     : workspace.evidence;
   const artifactCount =
-    Number(Boolean(workspace.editingSession?.state.subtitles?.length)) +
+    Number(Boolean(selectTextSegments(workspace.editingSession).length)) +
     Number(Boolean(workspace.renderResult?.result?.output_url));
   return (
     <aside className="min-h-0 overflow-hidden border-r border-[#1b1d1f] bg-[#080909]">
@@ -1092,7 +1141,7 @@ function workflowStepCompleted(step: string, workspace: WorkspaceController): bo
   if (step === "Ingest") return workspace.uploadedVideo?.status === "ready";
   if (step === "Understand") return Boolean(workspace.agentRun);
   if (step === "Plan" || step === "Edit") {
-    return Boolean(workspace.editingSession?.state.clips?.length);
+    return Boolean(selectPrimaryVideoSegments(workspace.editingSession).length);
   }
   if (step === "Render" || step === "Review" || step === "Export") {
     return workspace.renderResult?.status === "succeeded";
@@ -1176,13 +1225,14 @@ function ArtifactsPanel({ workspace }: { workspace: WorkspaceController }) {
     icon: React.ComponentType<{ className?: string }>;
     url?: string;
   }> = [];
-  if (workspace.editingSession?.state.subtitles?.length) {
-    artifacts.push({ title: "subtitles.srt", meta: `${workspace.editingSession.state.subtitles.length} cues`, status: "状态已生成", icon: FileText, url: workspace.renderResult?.result?.subtitle_url });
+  const textSegments = selectTextSegments(workspace.editingSession);
+  if (textSegments.length) {
+    artifacts.push({ title: "captions.ass", meta: `${textSegments.length} cues`, status: "状态已生成", icon: FileText, url: workspace.renderResult?.result?.subtitle_url });
   }
   if (workspace.renderResult?.result?.output_url) {
     const renderedResolution = workspace.renderResult.result.width && workspace.renderResult.result.height
       ? `${workspace.renderResult.result.width}×${workspace.renderResult.result.height}`
-      : String(workspace.editingSession?.state.settings?.aspect_ratio ?? "自动画幅");
+      : canvasRatio(workspace.editingSession);
     artifacts.push({
       title: workspace.renderResult.result.output_url.split("/").pop() ?? "camcat-render.mp4",
       meta: workspace.renderResult.result.duration_seconds
@@ -1227,31 +1277,21 @@ function EditorWorkspace({ workspace }: { workspace: WorkspaceController }) {
   const [workspaceMode, setWorkspaceMode] = useState<"edit" | "review">("edit");
   const [fitMode, setFitMode] = useState<"contain" | "cover">("contain");
   const [planTab, setPlanTab] = useState("Editing Plan");
-  let previewCursor = 0;
-  const sessionClips = (workspace.editingSession?.state.clips ?? []).map((clip, index) => {
-    const speed = Math.max(0.1, Number(clip.speed ?? 1));
-    const duration = Math.max(0, (Number(clip.source_end) - Number(clip.source_start)) / speed);
-    const preview = {
-      id: String(clip.clip_id ?? `clip-${index + 1}`),
-      label: String(clip.reason ?? `素材片段 ${index + 1}`),
-      start: previewCursor,
-      end: previewCursor + duration,
-      sourceStart: Number(clip.source_start),
-      speed,
-    };
-    previewCursor += duration;
-    return preview;
-  });
-  const sessionSubtitles = (workspace.editingSession?.state.subtitles ?? []).map((subtitle, index) => {
-    const clip = sessionClips.find((item) => item.id === String(subtitle.clip_id));
-    const start = clip
-      ? clip.start + (Number(subtitle.source_start) - clip.sourceStart) / clip.speed
-      : 0;
-    const end = clip
-      ? clip.start + (Number(subtitle.source_end) - clip.sourceStart) / clip.speed
-      : start;
+  const sessionClips = selectPrimaryVideoSegments(workspace.editingSession).map((clip, index) => {
+    const start = Number(clip.timeline_start_us) / 1_000_000;
+    const duration = Number(clip.timeline_duration_us) / 1_000_000;
     return {
-      id: String(subtitle.subtitle_id ?? `subtitle-${index + 1}`),
+      id: String(clip.segment_id ?? `segment-${index + 1}`),
+      label: String(clip.reason ?? `素材片段 ${index + 1}`),
+      start,
+      end: start + duration,
+    };
+  });
+  const sessionSubtitles = selectTextSegments(workspace.editingSession).map((subtitle, index) => {
+    const start = Number(subtitle.start_us) / 1_000_000;
+    const end = start + Number(subtitle.duration_us) / 1_000_000;
+    return {
+      id: String(subtitle.segment_id ?? `text-${index + 1}`),
       label: String(subtitle.text ?? ""),
       start,
       end,
@@ -1261,7 +1301,7 @@ function EditorWorkspace({ workspace }: { workspace: WorkspaceController }) {
   const visiblePlan = sessionClips;
   const visibleSubtitles = sessionSubtitles;
   const timelineDuration = Math.max(1, ...visiblePlan.map((clip) => clip.end));
-  const aspectRatio = String(workspace.editingSession?.state.settings?.aspect_ratio ?? "Auto");
+  const aspectRatio = canvasRatio(workspace.editingSession);
   return (
     <section id="editor-workspace" className="flex min-h-0 min-w-0 flex-col border-r border-[#1b1d1f] bg-[#050606]">
       <EditorToolbar mode={workspaceMode} onModeChange={setWorkspaceMode} fitMode={fitMode} onFitModeChange={setFitMode} aspectRatio={aspectRatio} />
@@ -1422,7 +1462,7 @@ function EditingPlan({ clips, subtitles, workspace, activeTab, onTabChange }: { 
         ))}
         {!displayedClips.length && (activeTab !== "Audit Log" || !workspace.auditEvents.length) && (
           <div className="flex h-[58px] min-w-[260px] items-center justify-center rounded-[12px] border border-dashed border-[#25282b] bg-[#0b0c0d] text-[10px] text-[#69717b]">
-            {activeTab === "Audit Log" ? `当前状态版本 v${workspace.editingSession?.state_version ?? 1}` : activeTab === "Subtitles" ? "当前计划尚未生成字幕" : "剪辑计划将在 Agent 写入真实 State Patch 后出现"}
+            {activeTab === "Audit Log" ? `当前状态版本 v${workspace.editingSession?.state_version ?? 1}` : activeTab === "Subtitles" ? "当前计划尚未生成字幕" : "剪辑计划将在 Agent 持久化领域命令后出现"}
           </div>
         )}
         {displayedClips.map((segment, index) => (
@@ -1459,6 +1499,7 @@ function EditingPlan({ clips, subtitles, workspace, activeTab, onTabChange }: { 
           <div className="flex h-[58px] shrink-0 items-center gap-2 rounded-[12px] border border-[#25282b] bg-[#0e0f10] px-2">
             <button type="button" onClick={() => void workspace.handleTrimClip(selectedClipId)} className="rounded-[8px] border border-[#303438] px-2 py-1 text-[10px] text-[#cbd3da]">裁短 0.5s</button>
             <button type="button" onClick={() => void workspace.handleSplitClip(selectedClipId)} className="rounded-[8px] border border-[#303438] px-2 py-1 text-[10px] text-[#cbd3da]">中点拆分</button>
+            <button type="button" onClick={() => void workspace.handleRemoveSegment(selectedClipId)} className="rounded-[8px] border border-[#303438] px-2 py-1 text-[10px] text-[#ff9b9b]">删除片段</button>
           </div>
         )}
         <button type="button" onClick={() => { workspace.setQuery("请从素材库再召回一个匹配片段，并追加到当前剪辑计划"); document.getElementById("agent-query")?.focus(); }} aria-label="通过 Agent 追加片段" className="grid h-[58px] w-[58px] shrink-0 place-items-center rounded-[12px] border border-[#25282b] bg-[#0e0f10] text-[#8b949e] transition hover:bg-[#141516] hover:text-white">
@@ -1517,8 +1558,8 @@ function MultiTrackTimeline({
 function TimelineRuler({ totalDuration }: { totalDuration: number }) {
   return (
     <div className="ml-[76px] grid h-5 grid-cols-6 border-b border-[#1b1d1f] font-mono text-[10px] text-[#68717b]">
-      {Array.from({ length: 6 }, (_, index) => formatTime((totalDuration * index) / 5)).map((time) => (
-        <div key={time} className="relative">
+      {Array.from({ length: 6 }, (_, index) => formatTime((totalDuration * index) / 5)).map((time, index) => (
+        <div key={index} className="relative">
           <span>{time}</span>
           <span className="absolute bottom-0 left-0 h-2 w-px bg-[#30363b]" />
         </div>
@@ -1822,7 +1863,7 @@ function FinalOutputCard({ workspace }: { workspace: WorkspaceController }) {
         <div className="space-y-1.5">
           <OutputLine label="文件名" value={hasRender ? outputPath.split("/").pop() ?? "rendered.mp4" : "等待生成"} />
           <OutputLine label="时长" value={workspace.renderResult?.result?.duration_seconds ? `${workspace.renderResult.result.duration_seconds.toFixed(1)}秒` : "由剪辑计划决定"} />
-          <OutputLine label="分辨率" value={workspace.renderResult?.result?.width && workspace.renderResult?.result?.height ? `${workspace.renderResult.result.width}×${workspace.renderResult.result.height}` : String(workspace.editingSession?.state.settings?.aspect_ratio ?? "由输出画幅决定")} />
+          <OutputLine label="分辨率" value={workspace.renderResult?.result?.width && workspace.renderResult?.result?.height ? `${workspace.renderResult.result.width}×${workspace.renderResult.result.height}` : canvasRatio(workspace.editingSession)} />
           <OutputLine label="状态" value={workspace.renderResult?.status ?? workspace.status} />
         </div>
         <div className="flex items-center gap-2 rounded-[10px] border border-[#202326] bg-[#050606] p-2">
@@ -1937,7 +1978,7 @@ function AgentInputBar({ workspace }: { workspace: WorkspaceController }) {
     <form onSubmit={submit} className="rounded-[24px] border border-[#202326] bg-[#111213] p-3">
       <div className="mb-2 flex flex-wrap gap-1.5">
         <span className="inline-flex items-center gap-1.5 rounded-full border border-[#25282b] bg-[#0a0b0c] px-2.5 py-1 text-[10px] font-medium text-[#9ca3af]">
-          Auto {String(workspace.editingSession?.state.settings?.aspect_ratio ?? "ratio")}
+          {canvasRatio(workspace.editingSession)}
         </span>
         <InputToolButton type="button" disabled={busy} onClick={() => fileInputRef.current?.click()}>
           {workspace.status === "uploading" ? (

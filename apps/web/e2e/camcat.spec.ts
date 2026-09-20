@@ -38,8 +38,8 @@ test("real multimodal import, edit, rollback, conflict and render journey", asyn
   const query = page.getByPlaceholder("有问题，尽管问");
   await query.fill("寻找与参考图相似的有活力镜头，剪成 12 秒竖屏短片");
   await query.press("Enter");
-  await expect(page.getByText(/剪辑计划已通过 State Patch 写入/).first()).toBeVisible({ timeout: 10 * 60 * 1000 });
-  await expect(page.getByText("validate_patch", { exact: true })).toBeVisible();
+  await expect(page.getByText(/领域命令已持久化/).first()).toBeVisible({ timeout: 10 * 60 * 1000 });
+  await expect(page.getByText("validate_project", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: /Export/ }).click();
   await expect(page.getByText("渲染完成", { exact: true })).toBeVisible({ timeout: 20 * 60 * 1000 });
@@ -57,15 +57,15 @@ test("real multimodal import, edit, rollback, conflict and render journey", asyn
   await expect(page.getByText("v4", { exact: true })).toBeVisible();
 
   const sessionId = latestSession!.editing_session_id;
-  const externalPatch = await request.patch(`${apiBase}/api/v1/editing/sessions/${sessionId}`, {
+  const externalCommand = await request.post(`${apiBase}/api/v1/editing/sessions/${sessionId}/commands`, {
     headers: { "X-User-Id": userId },
     data: {
       base_version: 4,
-      operations: [{ op: "replace", path: "/goal", value: "另一个窗口的更新" }],
+      commands: [{ type: "update_goal", goal: "另一个窗口的更新" }],
       reason: "E2E deliberate concurrent edit",
     },
   });
-  expect(externalPatch.ok()).toBeTruthy();
+  expect(externalCommand.ok()).toBeTruthy();
 
   await query.fill("这是使用过期版本发起的编辑");
   await query.press("Enter");

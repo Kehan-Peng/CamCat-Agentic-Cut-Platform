@@ -4,6 +4,7 @@ from typing import Any
 from uuid import UUID
 
 from camcat.database import SessionLocal
+from camcat.domain.commands import DomainEditCommand
 from camcat.repositories import StateRepository
 
 
@@ -16,15 +17,15 @@ class StatePersistenceService:
         session_id: str,
         owner_id: str,
         base_version: int,
-        operations: list[dict[str, Any]],
+        commands: list[DomainEditCommand],
         reason: str,
     ) -> tuple[int, dict[str, Any]]:
         with SessionLocal() as db:
-            state = StateRepository(db).apply(
+            state, _ = StateRepository(db).apply_commands(
                 session_id=UUID(session_id),
                 owner_id=owner_id,
                 base_version=base_version,
-                operations=operations,
+                commands=commands,
                 actor="camcat-agent",
                 reason=reason,
             )

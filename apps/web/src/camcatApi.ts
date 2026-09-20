@@ -1,12 +1,15 @@
 import type {
   AgenticSearchResponse as AgenticSearchDto,
   EditingSessionResponse as EditingSessionDto,
+  EditCommandBatch as EditCommandBatchDto,
+  EditingProjectV2,
   JobResponse as JobDto,
   SourceMediaReference as SourceMediaDto,
   SourceUploadResponse as SourceUploadDto,
 } from "./generated/api";
 
 export type FetchLike = typeof fetch;
+export type DomainEditCommand = EditCommandBatchDto["commands"][number];
 
 export type ProjectResponse = {
   project_id: string;
@@ -100,15 +103,11 @@ export type AgenticSearchResponse = Omit<AgenticSearchDto, "node_trace" | "ranke
   ranked_segments: RankedSegment[];
 };
 
-export type EditingState = {
-  title?: string;
-  goal?: string;
-  target_duration?: number;
-  clips?: Array<Record<string, unknown>>;
-  subtitles?: Array<Record<string, unknown>>;
-  settings?: Record<string, unknown>;
-  source_media?: SourceMediaReference[];
-  source_segments?: Array<Record<string, unknown>>;
+export type EditingState = EditingProjectV2 & {
+  metadata?: Record<string, unknown> & {
+    source_media?: SourceMediaReference[];
+    source_segments?: Array<Record<string, unknown>>;
+  };
 };
 
 export type EditingSessionResponse = Omit<EditingSessionDto, "state"> & {
@@ -177,7 +176,7 @@ export type WorkspaceRunView = {
 
 type ClientOptions = { baseUrl: string; userId: string; fetchImpl?: FetchLike };
 type RequestOptions = {
-  method: "GET" | "POST" | "PATCH" | "DELETE";
+  method: "GET" | "POST" | "DELETE";
   body?: BodyInit | string;
   headers?: Record<string, string>;
 };
@@ -221,7 +220,7 @@ export function createCamCatApiClient({ baseUrl, userId, fetchImpl = fetch }: Cl
     return payload as T;
   }
 
-  function json<T>(path: string, method: "POST" | "PATCH", body: unknown) {
+  function json<T>(path: string, method: "POST", body: unknown) {
     return requestJson<T>(path, {
       method,
       headers: { "content-type": "application/json" },
@@ -351,16 +350,16 @@ export function createCamCatApiClient({ baseUrl, userId, fetchImpl = fetch }: Cl
       );
     },
 
-    patchEditingSession(
+    applyEditCommands(
       editingSessionId: string,
       baseVersion: number,
-      operations: Array<{ op: "add" | "replace" | "remove"; path: string; value?: unknown }>,
+      commands: DomainEditCommand[],
       reason: string,
     ) {
       return json<EditingSessionResponse>(
-        `/api/v1/editing/sessions/${encodeURIComponent(editingSessionId)}`,
-        "PATCH",
-        { base_version: baseVersion, operations, reason },
+        `/api/v1/editing/sessions/${encodeURIComponent(editingSessionId)}/commands`,
+        "POST",
+        { base_version: baseVersion, commands, reason },
       );
     },
 
@@ -476,7 +475,7 @@ export function createCamCatApiClient({ baseUrl, userId, fetchImpl = fetch }: Cl
       return json<JobResponse>(
         `/api/v1/editing/sessions/${encodeURIComponent(editingSessionId)}/render`,
         "POST",
-        { base_version: baseVersion, burn_subtitles: true },
+        { base_version: baseVersion, renderer: "ffmpeg", quality_profile: "standard" },
       );
     },
   };

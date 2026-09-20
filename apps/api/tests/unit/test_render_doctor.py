@@ -14,9 +14,7 @@ def test_capability_profile_requires_renderer_contract(
     monkeypatch.setattr(
         doctor,
         "_run",
-        lambda args: (
-            "libx264 aac" if "-encoders" in args else "subtitles xfade acrossfade eq loudnorm amix"
-        ),
+        lambda args: "libx264 aac" if "-encoders" in args else "ass overlay xfade eq loudnorm amix",
     )
     checked = False
 
@@ -27,7 +25,7 @@ def test_capability_profile_requires_renderer_contract(
     result = doctor.inspect_capabilities(tmp_path / "runtime", object_store_healthcheck=healthcheck)
 
     assert result.encoders == ["libx264", "aac"]
-    assert result.filters == ["subtitles", "xfade", "acrossfade", "eq", "loudnorm", "amix"]
+    assert result.filters == ["ass", "overlay", "xfade", "eq", "loudnorm", "amix"]
     assert result.runtime_directory_writable
     assert result.object_store_reachable
     assert checked
@@ -40,5 +38,5 @@ def test_missing_filter_fails_before_render(
     monkeypatch.setattr(doctor, "_first_line", lambda args: "version")
     monkeypatch.setattr(doctor, "_run", lambda args: "libx264 aac")
 
-    with pytest.raises(doctor.CapabilityError, match="subtitles"):
+    with pytest.raises(doctor.CapabilityError, match="ass"):
         doctor.inspect_capabilities(tmp_path)

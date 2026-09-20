@@ -5,19 +5,17 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from camcat.domain.project import Canvas, TextStyle, Transform
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
 
 
 class RenderProfile(StrictModel):
-    schema_name: Literal["camcat-render-profile/v1"] = Field(
-        default="camcat-render-profile/v1", alias="schema"
+    schema_name: Literal["camcat-render-profile/v2"] = Field(
+        default="camcat-render-profile/v2", alias="schema"
     )
-    width: int = Field(ge=16, le=7680)
-    height: int = Field(ge=16, le=7680)
-    fps_num: int = Field(default=30, gt=0, le=120)
-    fps_den: int = Field(default=1, gt=0, le=1001)
     video_codec: str = "libx264"
     audio_codec: str = "aac"
     audio_sample_rate: int = Field(default=48_000, ge=8_000, le=192_000)
@@ -26,7 +24,6 @@ class RenderProfile(StrictModel):
     crf: int = Field(default=20, ge=0, le=51)
     preset: str = "veryfast"
     burn_subtitles: bool = True
-    default_dissolve_duration_ms: int = Field(default=400, ge=1, le=2_000)
     color_contrast: float = Field(default=1.035, ge=0.5, le=2)
     color_saturation: float = Field(default=1.06, ge=0, le=3)
     color_gamma: float = Field(default=1.01, ge=0.1, le=10)
@@ -34,37 +31,22 @@ class RenderProfile(StrictModel):
     loudness_target_lufs: float = Field(default=-14, ge=-70, le=-5)
     loudness_true_peak_db: float = Field(default=-1.5, ge=-9, le=0)
     loudness_range_lu: float = Field(default=11, ge=1, le=50)
-    subtitle_margin_v: int = Field(default=48, ge=0, le=1000)
-
-    @model_validator(mode="after")
-    def supported_frame_rate(self) -> RenderProfile:
-        if (self.fps_num, self.fps_den) not in {
-            (24, 1),
-            (25, 1),
-            (30, 1),
-            (50, 1),
-            (60, 1),
-            (30_000, 1001),
-            (60_000, 1001),
-        }:
-            raise ValueError("unsupported render frame rate")
-        return self
 
 
-class MediaFingerprint(StrictModel):
-    schema_name: Literal["camcat-media-fingerprint/v1"] = Field(
-        default="camcat-media-fingerprint/v1", alias="schema"
+class BuildMediaRef(StrictModel):
+    schema_name: Literal["camcat-build-media-ref/v2"] = Field(
+        default="camcat-build-media-ref/v2", alias="schema"
     )
     media_id: str = Field(min_length=1)
     storage_key: str = Field(min_length=1)
-    local_path: str = Field(min_length=1)
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    file_size: int = Field(gt=0)
+    size: int = Field(gt=0)
     duration_us: int = Field(gt=0)
     width: int = Field(ge=0)
     height: int = Field(ge=0)
     video_codec: str | None = None
     audio_codec: str | None = None
+    retention_class: Literal["transient_4h", "library"]
 
 
 class ProtectedSourceRange(StrictModel):
@@ -80,57 +62,53 @@ class ProtectedSourceRange(StrictModel):
         return self
 
 
-class TransitionSpec(StrictModel):
-    type: Literal["cut", "dissolve"] = "cut"
-    duration_frames: int = Field(default=0, ge=0)
-
-    @model_validator(mode="after")
-    def valid_duration(self) -> TransitionSpec:
-        if self.type == "cut" and self.duration_frames != 0:
-            raise ValueError("cut transition duration must be zero")
-        if self.type == "dissolve" and self.duration_frames <= 0:
-            raise ValueError("dissolve transition needs positive frame duration")
-        return self
-
-
 class CompiledVideoSegment(StrictModel):
-    clip_id: str
+    track_id: str
     segment_id: str
-    origin: str
     source_id: str
     source_sha256: str
-    source_start_us: int
-    source_duration_us: int
-    target_start_frame: int
-    target_duration_frames: int
+    visible_source_start_us: int = Field(ge=0)
+    visible_source_duration_us: int = Field(gt=0)
+    render_source_start_us: int = Field(ge=0)
+    render_source_duration_us: int = Field(gt=0)
+    timeline_start_frame: int = Field(ge=0)
+    timeline_duration_frames: int = Field(gt=0)
+    render_start_frame: int = Field(ge=0)
+    render_duration_frames: int = Field(gt=0)
     speed: float = Field(default=1.0, ge=0.1, le=8.0)
-    transition_in: TransitionSpec = Field(default_factory=TransitionSpec)
-    transition_out: TransitionSpec = Field(default_factory=TransitionSpec)
-    protected_ranges: list[ProtectedSourceRange] = Field(default_factory=list)
+    transform: Transform = Field(default_factory=Transform)
     reason: str = ""
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class CompiledVideoTrack(StrictModel):
-    track_id: str = "video-main"
+    track_id: str
+    name: str
     segments: list[CompiledVideoSegment]
 
 
-class CompiledSubtitle(StrictModel):
-    subtitle_id: str
+class CompiledTextSegment(StrictModel):
+    segment_id: str
+    start_frame: int = Field(ge=0)
+    duration_frames: int = Field(gt=0)
     text: str = Field(min_length=1)
-    target_start_frame: int = Field(ge=0)
-    target_end_frame: int = Field(gt=0)
-    style: dict[str, Any] | str = "default"
+    style: TextStyle
 
 
-class CompiledAudioCue(StrictModel):
-    cue_id: str
-    kind: Literal["dialogue", "bgm", "ambient", "sfx"]
+class CompiledTextTrack(StrictModel):
+    track_id: str
+    name: str
+    segments: list[CompiledTextSegment]
+
+
+class CompiledAudioSegment(StrictModel):
+    segment_id: str
     source_id: str
     source_sha256: str
-    source_start_us: int = Field(default=0, ge=0)
-    target_start_frame: int = Field(ge=0)
-    target_duration_frames: int = Field(gt=0)
+    source_start_us: int = Field(ge=0)
+    source_duration_us: int = Field(gt=0)
+    timeline_start_frame: int = Field(ge=0)
+    timeline_duration_frames: int = Field(gt=0)
     volume: float = Field(default=1.0, ge=0, le=4)
     fade_in_frames: int = Field(default=0, ge=0)
     fade_out_frames: int = Field(default=0, ge=0)
@@ -139,26 +117,34 @@ class CompiledAudioCue(StrictModel):
 
 class CompiledAudioTrack(StrictModel):
     track_id: str
-    kind: Literal["dialogue", "bgm", "ambient", "sfx"]
-    cues: list[CompiledAudioCue]
+    name: str
+    role: Literal["dialogue", "bgm", "ambient", "sfx"]
+    segments: list[CompiledAudioSegment]
 
 
-class CompiledTimeline(StrictModel):
-    schema_name: Literal["camcat-compiled-timeline/v1"] = Field(
-        default="camcat-compiled-timeline/v1", alias="schema"
+class CompiledTransitionEdge(StrictModel):
+    transition_id: str
+    track_id: str
+    left_segment_id: str
+    right_segment_id: str
+    type: Literal["dissolve"]
+    duration_frames: int = Field(gt=0)
+
+
+class CompiledTimelineV2(StrictModel):
+    schema_name: Literal["camcat-compiled-timeline/v2"] = Field(
+        default="camcat-compiled-timeline/v2", alias="schema"
     )
     session_id: UUID
     state_version: int = Field(ge=1)
-    fps_num: int = Field(gt=0)
-    fps_den: int = Field(gt=0)
-    width: int = Field(gt=0)
-    height: int = Field(gt=0)
+    canvas: Canvas
     frame_count: int = Field(gt=0)
     duration_us: int = Field(gt=0)
     video_tracks: list[CompiledVideoTrack]
     audio_tracks: list[CompiledAudioTrack] = Field(default_factory=list)
-    subtitles: list[CompiledSubtitle] = Field(default_factory=list)
-    source_manifest: list[MediaFingerprint]
+    text_tracks: list[CompiledTextTrack] = Field(default_factory=list)
+    transitions: list[CompiledTransitionEdge] = Field(default_factory=list)
+    source_manifest: list[BuildMediaRef]
     source_manifest_hash: str
     state_hash: str
     render_profile_hash: str

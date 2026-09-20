@@ -9,7 +9,11 @@ from sqlalchemy import Select, or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
+from camcat.domain.commands import DomainEditCommand
+from camcat.domain.project import Canvas, EditingProjectV2, MediaSourceRef, TimelineV2
+from camcat.domain.reducer import reduce_commands
 from camcat.domain.state_patch import (
+    PatchAudit,
     PatchConflict,
     VersionedState,
     apply_versioned_patch,
@@ -30,14 +34,45 @@ from camcat.models import (
 def redact_transient_document(document: dict[str, Any]) -> dict[str, Any]:
     """Remove all user-source media and derived analysis after its retention TTL."""
 
-    redacted = deepcopy(document)
-    redacted["source_media"] = []
-    redacted["source_segments"] = []
-    redacted["clips"] = [
-        item for item in redacted.get("clips", []) if item.get("origin") != "source"
+    project = EditingProjectV2.model_validate(deepcopy(document))
+    transient_ids = {
+        item.source_id for item in project.sources if item.retention_class == "transient_4h"
+    }
+    payload = project.model_dump(mode="json", by_alias=True)
+    payload["sources"] = [
+        item for item in payload["sources"] if item["source_id"] not in transient_ids
     ]
-    redacted["transient_source_status"] = "expired"
-    return redacted
+    removed_segments: set[str] = set()
+    for track in payload["timeline"]["tracks"]:
+        retained = []
+        for segment in track["segments"]:
+            if segment.get("source_id") in transient_ids:
+                removed_segments.add(segment["segment_id"])
+            else:
+                retained.append(segment)
+        track["segments"] = retained
+        if track["type"] == "video" and track is next(
+            (item for item in payload["timeline"]["tracks"] if item["type"] == "video"), None
+        ):
+            cursor = 0
+            for segment in retained:
+                segment["timeline_start_us"] = cursor
+                cursor += segment["timeline_duration_us"]
+    payload["timeline"]["transitions"] = [
+        item
+        for item in payload["timeline"]["transitions"]
+        if item["left_segment_id"] not in removed_segments
+        and item["right_segment_id"] not in removed_segments
+    ]
+    payload["speech_review"]["items"] = [
+        item
+        for item in payload["speech_review"]["items"]
+        if item["segment_id"] not in removed_segments
+    ]
+    payload["metadata"]["source_media"] = []
+    payload["metadata"]["source_segments"] = []
+    payload["metadata"]["transient_source_status"] = "expired"
+    return EditingProjectV2.model_validate(payload).model_dump(mode="json", by_alias=True)
 
 
 def sanitize_job_error(error: Exception) -> str:
@@ -45,6 +80,17 @@ def sanitize_job_error(error: Exception) -> str:
 
     message = str(error).strip() or error.__class__.__name__
     return message.splitlines()[0][:1000]
+
+
+def _redact_patch_operation(operation: dict[str, Any]) -> dict[str, Any]:
+    path = str(operation.get("path", ""))
+    sensitive_path = any(
+        marker in path
+        for marker in ("/source_media", "/source_segments", "/storage_key", "/transcript")
+    )
+    if sensitive_path or "temporary/" in repr(operation.get("value")):
+        return {"op": operation.get("op"), "path": path, "redacted": True}
+    return deepcopy(operation)
 
 
 class StateRepository:
@@ -72,33 +118,44 @@ class StateRepository:
         )
         self.db.add(session)
         self.db.flush()
-        document: dict[str, Any] = {
-            "title": "未命名剪辑",
-            "goal": goal,
-            "target_duration": 30.0,
-            "clips": [],
-            "subtitles": [],
-            "source_media": source_media or [],
-            "source_segments": source_segments or [],
-            "audio_library": audio_library or [],
-            "audio_plan": {
-                "normalize_loudness": True,
-                "target_lufs": -14,
-                "duck_music_under_dialogue": True,
-                "bgm": [],
-                "ambient": [],
-                "sound_effects": [],
-            },
-            "settings": {
-                "aspect_ratio": "auto",
-                "burn_subtitles": True,
+        raw_media = source_media or []
+        first = raw_media[0] if raw_media else {}
+        portrait = int(first.get("height") or 0) > int(first.get("width") or 0)
+        canvas = Canvas(
+            width=1080 if portrait else 1920,
+            height=1920 if portrait else 1080,
+            fps_num=30,
+            fps_den=1,
+        )
+        sources = [
+            MediaSourceRef(
+                source_id=str(item["media_id"]),
+                origin="user_upload",
+                storage_key=str(item["storage_key"]),
+                retention_class="transient_4h",
+                metadata={
+                    key: value
+                    for key, value in item.items()
+                    if key not in {"media_id", "storage_key", "playback_url"}
+                },
+            )
+            for item in raw_media
+        ]
+        project = EditingProjectV2(
+            project_id=str(project_id or session.id),
+            title="未命名剪辑",
+            goal=goal,
+            canvas=canvas,
+            sources=sources,
+            timeline=TimelineV2(),
+            metadata={
+                "source_media": raw_media,
+                "source_segments": source_segments or [],
+                "audio_library": audio_library or [],
                 "external_material_ratio_limit": 0.25,
-                "transitions": True,
-                "loudness_normalization": True,
-                "basic_color_grade": True,
-                "safe_area": True,
             },
-        }
+        )
+        document = project.model_dump(mode="json", by_alias=True)
         self.db.add(StateVersion(session_id=session.id, version=1, document=document))
         self.db.add(
             AuditEvent(
@@ -139,7 +196,34 @@ class StateRepository:
             raise RuntimeError("editing session current version is missing")
         return session, VersionedState(str(session.id), version.version, version.document)
 
-    def apply(
+    def apply_commands(
+        self,
+        *,
+        session_id: UUID,
+        owner_id: str,
+        base_version: int,
+        commands: list[DomainEditCommand],
+        actor: str,
+        reason: str,
+    ) -> tuple[VersionedState, PatchAudit]:
+        _, before = self.current(session_id, owner_id=owner_id)
+        if base_version != before.version:
+            raise PatchConflict(
+                expected_version=base_version,
+                current_version=before.version,
+                current_patch=self._latest_patch_metadata(session_id),
+            )
+        reduction = reduce_commands(EditingProjectV2.model_validate(before.document), commands)
+        return self._apply_internal(
+            session_id=session_id,
+            owner_id=owner_id,
+            base_version=base_version,
+            operations=reduction.operations,
+            actor=actor,
+            reason=reason,
+        )
+
+    def _apply_internal(
         self,
         *,
         session_id: UUID,
@@ -148,7 +232,7 @@ class StateRepository:
         operations: list[dict[str, Any]],
         actor: str,
         reason: str,
-    ) -> VersionedState:
+    ) -> tuple[VersionedState, PatchAudit]:
         _, before = self.current(session_id, owner_id=owner_id)
         if base_version != before.version:
             raise PatchConflict(
@@ -209,7 +293,11 @@ class StateRepository:
                 base_version=audit.base_version,
                 result_version=audit.result_version,
                 operations=[
-                    {"op": operation.op, "path": operation.path, "value": operation.value}
+                    {
+                        "op": operation.op,
+                        "path": operation.path,
+                        **({} if operation.op == "remove" else {"value": operation.value}),
+                    }
                     for operation in audit.operations
                 ],
                 actor=actor,
@@ -217,7 +305,7 @@ class StateRepository:
             )
         )
         self.db.commit()
-        return after
+        return after, audit
 
     def _latest_patch_metadata(self, session_id: UUID) -> dict[str, Any] | None:
         latest_patch = self.db.scalar(
@@ -254,7 +342,7 @@ class StateRepository:
         if target is None:
             raise LookupError("target state version not found")
         operations = build_rollback_patch(current.document, target.document)
-        return self.apply(
+        state, _ = self._apply_internal(
             session_id=session_id,
             owner_id=owner_id,
             base_version=base_version,
@@ -262,6 +350,7 @@ class StateRepository:
             actor=owner_id,
             reason=f"rollback to version {target_version}",
         )
+        return state
 
 
 class JobRepository:
@@ -464,15 +553,7 @@ class JobRepository:
                 select(StatePatch).where(StatePatch.session_id == session.id)
             ).all()
             for patch in patches:
-                operations = deepcopy(patch.operations)
-                for operation in operations:
-                    if operation.get("path") == "/clips" and isinstance(
-                        operation.get("value"), list
-                    ):
-                        operation["value"] = [
-                            item for item in operation["value"] if item.get("origin") != "source"
-                        ]
-                patch.operations = operations
+                patch.operations = [_redact_patch_operation(item) for item in patch.operations]
             session.expired_at = cutoff
         jobs = self.db.scalars(
             select(Job).where(Job.expires_at <= cutoff, Job.redacted_at.is_(None))

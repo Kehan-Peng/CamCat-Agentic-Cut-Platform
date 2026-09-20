@@ -5,8 +5,8 @@ compiled timeline, complete file manifest, render profile, source fingerprints, 
 hashes all verify.
 
 `FFmpegRenderer` builds one filter graph from the compiled timeline. It performs source trim,
-speed adjustment, profile-controlled scale/crop/FPS conversion, real temporal `xfade` and
-`acrossfade`, subtitle burn-in, cue placement, fades, mixing, and encoding. Cut transitions use
+speed adjustment, profile-controlled scale/crop/FPS conversion, real temporal `xfade`,
+ASS text-track burn-in, cue placement, fades, mixing, and encoding. Cut transitions use
 concat; a dissolve is never approximated by independent fades.
 
 ## Output verifier
@@ -15,7 +15,7 @@ After encoding, `OutputVerifier` requires:
 
 - a non-empty readable container and a video stream;
 - profile width, height, and rational frame rate;
-- expected versus decoded frame count, with an explicit maximum one-frame tolerance;
+- exact equality between expected and decoded frame count;
 - expected versus measured duration and the recorded delta;
 - the profile-required audio stream;
 - a successful full decode using FFmpeg error escalation;
@@ -37,6 +37,7 @@ Only a later human or editorial-QC workflow may advance the final level.
 ## Capability inspection
 
 Worker bootstrap runs a backend doctor before accepting work. It verifies FFmpeg and FFprobe
-versions, `libx264` and `aac` encoders, `subtitles`, `xfade`, and `acrossfade` filters, runtime
+versions, `libx264` and `aac` encoders, `ass`, `overlay`, `xfade`, `eq`, `loudnorm`, and `amix`
+filters, runtime
 directory write access, and object-store reachability. Missing capabilities fail early rather
 than surfacing halfway through a render.

@@ -102,7 +102,29 @@ def test_real_agent_finishes_after_browser_disconnect() -> None:
     with httpx.Client(
         base_url=os.environ.get("CAMCAT_TEST_API_URL", "http://api:8000"), timeout=90
     ) as client:
-        created = client.post("/api/v1/editing/sessions", json={"current_goal": "测试断线恢复"})
+        video = Path(os.environ["CAMCAT_EXTERNAL_TEST_VIDEO"])
+        with video.open("rb") as stream:
+            uploaded = client.post(
+                "/api/v1/source-media",
+                files={"files": (video.name, stream, "video/mp4")},
+                data={"analysis_mode": "keyframes"},
+            )
+        uploaded.raise_for_status()
+        source_job_id = uploaded.json()["job_id"]
+        deadline = time.monotonic() + 180
+        while time.monotonic() < deadline:
+            source_job = client.get(f"/api/v1/jobs/{source_job_id}")
+            source_job.raise_for_status()
+            if source_job.json()["status"] == "succeeded":
+                break
+            assert source_job.json()["status"] not in ("failed", "dead_letter")
+            time.sleep(1)
+        else:
+            pytest.fail("Source analysis did not finish within 180 seconds")
+        created = client.post(
+            "/api/v1/editing/sessions",
+            json={"current_goal": "测试断线恢复", "source_job_id": source_job_id},
+        )
         created.raise_for_status()
         session = created.json()
         session_id = session["editing_session_id"]
@@ -111,7 +133,10 @@ def test_real_agent_finishes_after_browser_disconnect() -> None:
             with client.stream(
                 "POST",
                 f"/api/v1/editing/sessions/{session_id}/agent/stream",
-                json={"base_version": session["state_version"], "instruction": "只把标题改为夏日"},
+                json={
+                    "base_version": session["state_version"],
+                    "instruction": "生成一条简洁的旅行短片",
+                },
             ) as response:
                 response.raise_for_status()
                 for line in response.iter_lines():
@@ -125,10 +150,11 @@ def test_real_agent_finishes_after_browser_disconnect() -> None:
                 response.raise_for_status()
                 run = response.json()
                 if run["status"] == "succeeded":
-                    assert len(run["node_trace"]) == 3
+                    assert len(run["node_trace"]) == 7
                     updated = client.get(f"/api/v1/editing/sessions/{session_id}").json()
                     assert updated["state_version"] == session["state_version"] + 1
-                    assert updated["state"]["title"]
+                    assert updated["state"]["schema"] == "camcat-editing-project/v2"
+                    assert updated["state"]["timeline"]["tracks"]
                     return
                 assert run["status"] not in ("failed", "dead_letter"), run.get("error")
                 time.sleep(0.5)

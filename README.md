@@ -37,7 +37,7 @@ CamCat 是我的个人视频实验室。上传几段原片，写一句想要的�
 
 ### 编辑计划
 
-这里汇集 Evidence、State、Trace、字幕、Audit Log 和多轨时间线。每次片段调整都会变成带版本号的 State Patch，刷新、比较和回滚都有迹可循。
+这里汇集 Evidence、State、Trace、字幕、Audit Log 和多轨时间线。每次片段调整都会提交带版本号的类型化 Domain Command；内部自动生成审计 patch，刷新、比较和回滚都有迹可循。
 
 ### 导出渲染
 

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import shutil
 import signal
 import time
+from datetime import timedelta
 from enum import StrEnum
 from pathlib import Path
 from types import FrameType
@@ -13,6 +15,7 @@ from sqlalchemy import delete, select, text
 
 from camcat.config import get_settings
 from camcat.database import SessionLocal
+from camcat.domain.project import EditingProjectV2
 from camcat.media.ffmpeg import (
     detect_scene_cuts,
     extract_audio,
@@ -39,9 +42,10 @@ from camcat.rendering.build import (
     RenderBuildService,
     verify_render_build,
 )
-from camcat.rendering.doctor import CapabilityProfile, inspect_capabilities
+from camcat.rendering.doctor import RendererCapabilityProfile, inspect_capabilities
 from camcat.rendering.ffmpeg_renderer import FFmpegRenderer, FFmpegRenderError
 from camcat.rendering.fingerprint import MediaFingerprintError, fingerprint_media
+from camcat.rendering.materialization import MaterializedSources
 from camcat.rendering.verification import OutputVerificationError, verify_output
 from camcat.repositories import JobRepository, sanitize_job_error
 from camcat.retrieval.milvus_store import MilvusSegmentStore
@@ -52,9 +56,13 @@ from camcat.services.providers import (
     QwenEmbeddingClient,
     QwenVisualAnalysisClient,
 )
-from camcat.timeline.compiler import TimelineCompiler
-from camcat.timeline.schemas import MediaFingerprint, RenderProfile
-from camcat.timeline.validator import TimelineValidationError, verify_compiled_timeline
+from camcat.timeline.compiler import TimelineCompilerV2
+from camcat.timeline.schemas import RenderProfile
+from camcat.timeline.validator import (
+    TimelineValidationError,
+    content_hash,
+    verify_compiled_timeline,
+)
 
 
 class Worker:
@@ -66,7 +74,7 @@ class Worker:
         self.visual_analysis = QwenVisualAnalysisClient(self.settings)
         self.asr = QwenAsrClient(self.settings)
         self.milvus = MilvusSegmentStore(self.settings)
-        self.capabilities: CapabilityProfile | None = None
+        self.capabilities: RendererCapabilityProfile | None = None
         self.running = True
         self._last_maintenance = 0.0
 
@@ -119,7 +127,7 @@ class Worker:
                         JobStatus.CANCELLED,
                         JobStatus.DEAD_LETTER,
                     }:
-                        self._remove_job_runtime(job)
+                        self._freeze_render_failure(job, error)
 
     def _run_maintenance(self, repository: JobRepository) -> None:
         lock_key = 7_823_441_901
@@ -146,12 +154,37 @@ class Worker:
                 ):
                     self.object_store.delete_key(storage_key)
             repository.redact_expired(now=cutoff)
+            expired_evidence = repository.db.scalars(
+                select(Job).where(
+                    Job.kind == JobKind.RENDER,
+                    Job.status.in_([JobStatus.FAILED, JobStatus.CANCELLED, JobStatus.DEAD_LETTER]),
+                    Job.finished_at < cutoff - timedelta(hours=24),
+                )
+            ).all()
+            for render_job in expired_evidence:
+                self._remove_job_runtime(render_job)
         finally:
             repository.db.scalar(text("SELECT pg_advisory_unlock(:key)"), {"key": lock_key})
 
     def _remove_job_runtime(self, job: Job) -> None:
         job_dir = Path(self.settings.runtime_dir) / "jobs" / str(job.id)
         shutil.rmtree(job_dir, ignore_errors=True)
+
+    def _freeze_render_failure(self, job: Job, error: str) -> None:
+        job_dir = Path(self.settings.runtime_dir) / "jobs" / str(job.id)
+        job_dir.mkdir(parents=True, exist_ok=True)
+        evidence = {
+            "schema": "camcat-render-failure/v1",
+            "job_id": str(job.id),
+            "status": job.status.value,
+            "category": (job.checkpoint or {}).get("failure_category"),
+            "error": error,
+            "failed_at": utcnow().isoformat(),
+            "retention_hours": 24,
+        }
+        (job_dir / "failure.json").write_text(
+            json.dumps(evidence, ensure_ascii=False, sort_keys=True), encoding="utf-8"
+        )
 
     def _finalize_failed_ingest(self, job: Job, db: Any, error: str) -> None:
         try:
@@ -501,62 +534,41 @@ class Worker:
             "state_loaded",
             {"session_id": str(session_id), "state_version": version_number},
         )
-        width, height = (int(value) for value in str(job.payload["resolution"]).split("x"))
         profile_payload = dict(job.payload.get("render_profile") or {})
-        profile = RenderProfile(width=width, height=height, **profile_payload)
+        profile = RenderProfile(**profile_payload)
         job_dir = Path(self.settings.runtime_dir) / "jobs" / str(job.id)
         source_dir = job_dir / "sources"
-        sources: dict[str, MediaFingerprint] = {}
-        document = dict(version.document)
-        clips = list(document.get("clips", []))
-        for index, clip_plan in enumerate(clips):
-            if clip_plan.get("origin") == "source":
-                storage_key = str(clip_plan.get("storage_key") or "")
-                if not storage_key:
-                    raise LookupError("transient source clip is missing its storage reference")
-                source_id = str(
-                    clip_plan.get("media_id")
-                    or clip_plan.get("source_id")
-                    or clip_plan.get("segment_id")
-                    or index
-                )
-            else:
-                segment = db.get(Segment, UUID(str(clip_plan["segment_id"])))
-                if segment is None:
-                    raise LookupError(f"segment {clip_plan['segment_id']} no longer exists")
-                asset = db.get(Asset, segment.asset_id)
-                if asset is None:
-                    raise LookupError("source asset no longer exists")
-                storage_key = asset.storage_key
-                source_id = str(clip_plan.get("segment_id"))
+        sources: MaterializedSources = {}
+        project = EditingProjectV2.model_validate(version.document)
+        used_ids = {
+            segment.source_id
+            for track in project.timeline.tracks
+            for segment in track.segments
+            if hasattr(segment, "source_id")
+        }
+        source_registry = {item.source_id: item for item in project.sources}
+        for index, source_id in enumerate(sorted(used_ids)):
+            try:
+                source_ref = source_registry[source_id]
+            except KeyError as exc:
+                raise LookupError(f"timeline source is not registered: {source_id}") from exc
+            storage_key = source_ref.storage_key
             source = source_dir / f"{_safe_runtime_name(source_id)}.media"
             if not source.exists():
                 self._download_render_source(storage_key, source)
             sources[source_id] = fingerprint_media(
-                source, media_id=source_id, storage_key=storage_key
+                source,
+                media_id=source_id,
+                storage_key=storage_key,
+                retention_class=source_ref.retention_class,
             )
-            jobs.update_progress(job, 0.08 + 0.17 * ((index + 1) / max(1, len(clips))))
-
-        audio_plan = document.get("audio_plan", {})
-        if isinstance(audio_plan, dict):
-            for state_key in ("bgm", "ambient", "sound_effects"):
-                for item in audio_plan.get(state_key, []):
-                    storage_key = str(item.get("storage_key") or "")
-                    if not storage_key:
-                        raise LookupError(f"audio cue {state_key} is missing its storage reference")
-                    source_id = str(item.get("media_id") or item.get("source_id") or storage_key)
-                    source = source_dir / f"{_safe_runtime_name(source_id)}.audio"
-                    if not source.exists():
-                        self._download_render_source(storage_key, source)
-                    sources[source_id] = fingerprint_media(
-                        source, media_id=source_id, storage_key=storage_key
-                    )
+            jobs.update_progress(job, 0.08 + 0.17 * ((index + 1) / max(1, len(used_ids))))
         jobs.checkpoint(job, "sources_fingerprinted", {"source_count": len(sources)})
 
-        timeline = TimelineCompiler(profile).compile(
+        timeline = TimelineCompilerV2(profile).compile(
             session_id=session_id,
             state_version=version_number,
-            document=document,
+            project=project,
             sources=sources,
         )
         jobs.checkpoint(
@@ -574,19 +586,41 @@ class Worker:
                 raise BuildVerificationError(
                     "existing render build belongs to different compiled input"
                 )
+            if self.capabilities is None:
+                raise RuntimeError("renderer capability profile is unavailable")
+            if build.manifest.renderer_capability_hash != content_hash(self.capabilities):
+                raise BuildVerificationError(
+                    "existing render build belongs to a different renderer capability profile"
+                )
         else:
-            build = RenderBuildService(renderer_version=FFmpegRenderer.VERSION).create(
-                build_root, timeline=timeline, profile=profile
+            if self.capabilities is None:
+                raise RuntimeError("renderer capability profile is unavailable")
+            build = RenderBuildService().create(
+                build_root, timeline=timeline, profile=profile, capability=self.capabilities
             )
-        jobs.checkpoint(job, "build_created", {"build_hash": build.manifest.build_hash})
+        jobs.checkpoint(job, "build_created", {"build_hash": build.manifest.build_instance_hash})
         build = verify_render_build(build.root)
-        jobs.checkpoint(job, "build_verified", {"build_hash": build.manifest.build_hash})
+        jobs.checkpoint(job, "build_verified", {"build_hash": build.manifest.build_instance_hash})
 
         output = job_dir / "camcat-render.mp4"
         jobs.checkpoint(job, "render_started")
-        FFmpegRenderer().render(build, output)
+        FFmpegRenderer().render(build, sources, output)
         jobs.checkpoint(job, "encoded", {"output_bytes": output.stat().st_size})
-        verification = verify_output(build, output)
+        try:
+            verification = verify_output(build, output)
+        except Exception as exc:
+            (job_dir / "verification-result.json").write_text(
+                json.dumps(
+                    {"status": "failed", "error": sanitize_job_error(exc)},
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                encoding="utf-8",
+            )
+            raise
+        (job_dir / "verification-result.json").write_text(
+            verification.model_dump_json(indent=2), encoding="utf-8"
+        )
         jobs.checkpoint(
             job,
             "decode_verified",
@@ -600,18 +634,19 @@ class Worker:
         output_key = f"renders/{session_id}/v{version_number}/{job.id}.mp4"
         self.object_store.upload_file(output, output_key, "video/mp4")
         subtitle_key = None
-        subtitles_path = build.root / "subtitles.srt"
+        subtitles_path = build.root / "captions.ass"
         if subtitles_path.is_file():
-            subtitle_key = f"renders/{session_id}/v{version_number}/{job.id}.srt"
-            self.object_store.upload_file(subtitles_path, subtitle_key, "application/x-subrip")
+            subtitle_key = f"renders/{session_id}/v{version_number}/{job.id}.ass"
+            self.object_store.upload_file(subtitles_path, subtitle_key, "text/x-ssa")
         build_prefix = f"renders/{session_id}/v{version_number}/{job.id}/build"
         build_keys: dict[str, str] = {}
         for filename, content_type in (
             ("compiled-timeline.json", "application/json"),
             ("source-manifest.json", "application/json"),
             ("render-profile.json", "application/json"),
+            ("renderer-capability.json", "application/json"),
             ("build-manifest.json", "application/json"),
-            ("subtitles.srt", "application/x-subrip"),
+            ("captions.ass", "text/x-ssa"),
         ):
             if not (build.root / filename).is_file():
                 continue
@@ -624,7 +659,8 @@ class Worker:
             "state_version": version_number,
             "state_hash": timeline.state_hash,
             "compiled_timeline_hash": timeline.compiled_hash,
-            "render_build_hash": build.manifest.build_hash,
+            "render_build_input_digest": build.manifest.build_input_digest,
+            "render_build_hash": build.manifest.build_instance_hash,
             "output_key": output_key,
             "subtitle_key": subtitle_key,
             "build_keys": build_keys,

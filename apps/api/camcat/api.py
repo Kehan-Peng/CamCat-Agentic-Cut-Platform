@@ -22,8 +22,10 @@ from camcat.agent.scope import editing_retrieval_filters
 from camcat.agent.streaming import background_stream
 from camcat.config import Settings, get_settings
 from camcat.database import SessionLocal, get_db
+from camcat.domain.commands import EditCommandBatch
+from camcat.domain.project import EditingProjectV2
 from camcat.domain.state_patch import PatchConflict
-from camcat.editing.policies import choose_aspect_ratio, expiry_for_upload, resolution_for_ratio
+from camcat.editing.policies import expiry_for_upload
 from camcat.media.ffmpeg import MediaCommandError, probe
 from camcat.models import (
     Asset,
@@ -46,15 +48,16 @@ from camcat.retrieval.service import RetrievalService
 from camcat.schemas import (
     AgentEditRequest,
     AgenticSearchResponse,
+    CommandAuditResponse,
     CreateEditingSessionRequest,
     CreateProjectRequest,
+    EditCommandBatchResponse,
     EditingSessionResponse,
     ErrorEnvelope,
     GraphRunResponse,
     ImportOpenMediaRequest,
     JobResponse,
     PageResponse,
-    PatchEditingSessionRequest,
     PatchResponse,
     ProjectResponse,
     RankedSegmentResponse,
@@ -596,13 +599,14 @@ def _editing_session_response(
 ) -> EditingSessionResponse:
     """Add short-lived playback URLs without persisting them in version history."""
     state = deepcopy(document)
-    for media in state.get("source_media") or []:
+    metadata = state.setdefault("metadata", {})
+    for media in metadata.get("source_media") or []:
         storage_key = media.get("storage_key")
         if storage_key:
             media["playback_url"] = services.object_store.signed_url(
                 str(storage_key), expires_seconds=60 * 60
             )
-    for segment in state.get("source_segments") or []:
+    for segment in metadata.get("source_segments") or []:
         storage_key = segment.get("storage_key")
         thumbnail_key = segment.get("thumbnail_key")
         if storage_key:
@@ -616,7 +620,7 @@ def _editing_session_response(
     return EditingSessionResponse(
         editing_session_id=session.id,
         state_version=version,
-        state=state,
+        state=EditingProjectV2.model_validate(state),
         updated_at=session.updated_at,
     )
 
@@ -857,7 +861,9 @@ def list_state_versions(
     return PageResponse(
         items=[
             VersionResponse(
-                version=item.version, document=item.document, created_at=item.created_at
+                version=item.version,
+                document=EditingProjectV2.model_validate(item.document),
+                created_at=item.created_at,
             ).model_dump(mode="json")
             for item in page
         ],
@@ -916,21 +922,36 @@ def list_audit_events(
     )
 
 
-@app.patch("/api/v1/editing/sessions/{session_id}", response_model=EditingSessionResponse)
-def patch_editing_session(
-    session_id: UUID, request: PatchEditingSessionRequest, db: Db, owner_id: Owner
-) -> EditingSessionResponse:
-    state = StateRepository(db).apply(
+@app.post(
+    "/api/v1/editing/sessions/{session_id}/commands",
+    response_model=EditCommandBatchResponse,
+)
+def apply_edit_commands(
+    session_id: UUID, request: EditCommandBatch, db: Db, owner_id: Owner
+) -> EditCommandBatchResponse:
+    state, audit = StateRepository(db).apply_commands(
         session_id=session_id,
         owner_id=owner_id,
         base_version=request.base_version,
-        operations=[item.model_dump(exclude_none=False) for item in request.operations],
+        commands=request.commands,
         actor=owner_id,
         reason=request.reason,
     )
     session = db.get(EditingSession, session_id)
     assert session is not None
-    return _editing_session_response(session, version=state.version, document=state.document)
+    return EditCommandBatchResponse(
+        editing_session_id=session.id,
+        state_version=state.version,
+        state=EditingProjectV2.model_validate(state.document),
+        audit=CommandAuditResponse(
+            patch_id=audit.patch_id,
+            base_version=audit.base_version,
+            result_version=audit.result_version,
+            actor=audit.actor,
+            reason=audit.reason,
+        ),
+        updated_at=session.updated_at,
+    )
 
 
 @app.post("/api/v1/editing/sessions/{session_id}/rollback", response_model=EditingSessionResponse)
@@ -1084,7 +1105,7 @@ def stream_editing_agent(
                 "completed",
                 {
                     "graph_run_id": str(run.id),
-                    "message": "剪辑计划已通过 State Patch 原子写入",
+                    "message": "剪辑命令已通过 Domain Command CAS 原子写入",
                     "session": _editing_session_response(
                         session,
                         version=final_state["persisted_version"],
@@ -1133,37 +1154,32 @@ def render_editing_session(
     _, current = StateRepository(db).current(session_id, owner_id=owner_id)
     if current.version != request.base_version:
         raise PatchConflict(expected_version=request.base_version, current_version=current.version)
-    if not current.document.get("clips"):
+    if not any(
+        track.get("type") == "video" and track.get("segments")
+        for track in current.document["timeline"]["tracks"]
+    ):
         raise HTTPException(422, "剪辑计划没有片段，无法渲染")
-    configured_ratio = str(current.document.get("settings", {}).get("aspect_ratio", "16:9"))
-    if configured_ratio == "auto":
-        source_media = current.document.get("source_media") or []
-        first_source = source_media[0] if source_media else {}
-        configured_ratio = choose_aspect_ratio(
-            str(current.document.get("goal", "")),
-            int(first_source.get("width") or 0),
-            int(first_source.get("height") or 0),
-        )
+    execution_quality = {
+        "preview": {"crf": 28, "preset": "ultrafast"},
+        "standard": {"crf": 20, "preset": "veryfast"},
+        "high": {"crf": 16, "preset": "medium"},
+    }[request.quality_profile]
     job = JobRepository(db).enqueue(
         owner_id=owner_id,
         kind=JobKind.RENDER,
         payload={
             "session_id": str(session_id),
             "version": current.version,
-            "resolution": request.resolution
-            or "x".join(str(value) for value in resolution_for_ratio(configured_ratio)),
-            "burn_subtitles": request.burn_subtitles,
+            "renderer": request.renderer,
+            "quality_profile": request.quality_profile,
             "render_profile": {
-                "fps_num": request.fps,
-                "fps_den": 1,
                 "video_codec": "libx264",
                 "audio_codec": "aac",
                 "audio_sample_rate": 48000,
                 "audio_channels": 2,
                 "pixel_format": "yuv420p",
-                "crf": 20,
-                "preset": "veryfast",
-                "burn_subtitles": request.burn_subtitles,
+                **execution_quality,
+                "burn_subtitles": True,
                 "color_contrast": 1.035,
                 "color_saturation": 1.06,
                 "color_gamma": 1.01,
@@ -1171,7 +1187,6 @@ def render_editing_session(
                 "loudness_target_lufs": -14,
                 "loudness_true_peak_db": -1.5,
                 "loudness_range_lu": 11,
-                "subtitle_margin_v": 48,
             },
         },
     )
@@ -1196,9 +1211,9 @@ def _node_message(node: str, state: dict[str, Any]) -> str:
         "understand_requirement": "已解析发布目标、节奏与画幅",
         "plan_query": "已规划素材库多路召回策略",
         "retrieve_material": f"已检索并重排 {len(state.get('ranked_materials', []))} 个补充素材",
-        "generate_edit_plan": f"已完成 {len(state.get('edit_plan', []))} 个镜头的逻辑重排",
-        "generate_subtitles": f"已生成 {len(state.get('subtitles', []))} 条字幕",
-        "validate_patch": "已校验原片主体、25% 素材上限与乐观锁补丁",
+        "generate_edit_plan": f"已生成 {len(state.get('domain_commands', []))} 条领域命令",
+        "generate_subtitles": "已把字幕写入文字轨命令",
+        "validate_project": "已模拟命令并校验 V2 工程与乐观锁输入",
     }
     return messages.get(node, f"{node} 已完成")
 
@@ -1356,9 +1371,8 @@ def _redact_graph_state(state: dict[str, Any]) -> dict[str, Any]:
         "current_document",
         "persisted_document",
         "source_materials",
-        "edit_plan",
-        "subtitles",
-        "patch_operations",
+        "domain_commands",
+        "simulated_document",
     ):
         sensitive = redacted.pop(key, None)
         if sensitive is not None:

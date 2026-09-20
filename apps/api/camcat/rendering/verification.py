@@ -57,19 +57,18 @@ def verify_output(build: RenderBuild, output: Path) -> OutputVerificationResult:
     )
     if video is None:
         raise OutputVerificationError("render output has no video stream")
-    profile = build.profile
     if (int(video.get("width", 0)), int(video.get("height", 0))) != (
-        profile.width,
-        profile.height,
+        build.timeline.canvas.width,
+        build.timeline.canvas.height,
     ):
         raise OutputVerificationError("render output dimensions differ from the render profile")
     fps = float(Fraction(str(video.get("avg_frame_rate") or video.get("r_frame_rate"))))
-    expected_fps = profile.fps_num / profile.fps_den
+    expected_fps = build.timeline.canvas.fps_num / build.timeline.canvas.fps_den
     if not math.isclose(fps, expected_fps, abs_tol=0.001):
         raise OutputVerificationError("render output frame rate differs from the render profile")
     actual_frames = int(video.get("nb_read_frames") or video.get("nb_frames") or -1)
     frame_delta = actual_frames - build.timeline.frame_count
-    if abs(frame_delta) > 1:
+    if frame_delta != 0:
         raise OutputVerificationError(
             "render output frame count mismatch: "
             f"expected {build.timeline.frame_count}, got {actual_frames}"
@@ -77,7 +76,9 @@ def verify_output(build: RenderBuild, output: Path) -> OutputVerificationResult:
     duration = float(payload.get("format", {}).get("duration") or video.get("duration") or 0)
     expected_duration = build.timeline.duration_us / 1_000_000
     duration_delta = duration - expected_duration
-    if abs(duration_delta) > max(0.05, profile.fps_den / profile.fps_num):
+    if abs(duration_delta) > max(
+        0.05, build.timeline.canvas.fps_den / build.timeline.canvas.fps_num
+    ):
         raise OutputVerificationError("render output duration differs from compiled timeline")
     # The render profile always produces an audio program. Sources without dialogue receive an
     # explicit silent bed, so a missing output audio stream is still a contract violation.

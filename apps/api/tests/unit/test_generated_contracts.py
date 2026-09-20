@@ -25,3 +25,29 @@ def test_contract_check_detects_missing_and_stale_generated_files(tmp_path: Path
     generated = tmp_path / "apps" / "web" / "src" / "generated" / "api.ts"
     generated.write_text("stale\n", encoding="utf-8")
     assert generator.main(["--check"]) == 1
+
+
+def test_generator_preserves_discriminated_unions_and_literal_tags() -> None:
+    generator = _load_generator()
+
+    assert generator.ts_type({"const": "video", "type": "string"}) == '"video"'
+    assert (
+        generator.ts_type(
+            {
+                "oneOf": [
+                    {"$ref": "#/components/schemas/VideoTrack"},
+                    {"$ref": "#/components/schemas/TextTrack"},
+                ]
+            }
+        )
+        == "VideoTrack | TextTrack"
+    )
+    assert (
+        generator.ts_type(
+            {
+                "type": "object",
+                "properties": {"type": {"type": "string", "const": "video"}},
+            }
+        )
+        == '{\n  "type": "video";\n}'
+    )

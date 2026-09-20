@@ -4,9 +4,10 @@ import hashlib
 import json
 import subprocess
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
-from camcat.timeline.schemas import MediaFingerprint
+from camcat.rendering.materialization import MaterializedMedia
+from camcat.timeline.schemas import BuildMediaRef
 
 
 class MediaFingerprintError(ValueError):
@@ -35,7 +36,13 @@ def probe_json(path: Path, *, count_frames: bool = False) -> dict[str, Any]:
         raise MediaFingerprintError("ffprobe returned invalid JSON") from exc
 
 
-def fingerprint_media(path: Path, *, media_id: str, storage_key: str) -> MediaFingerprint:
+def fingerprint_media(
+    path: Path,
+    *,
+    media_id: str,
+    storage_key: str,
+    retention_class: Literal["transient_4h", "library"] | None = None,
+) -> MaterializedMedia:
     resolved = path.resolve(strict=True)
     before = resolved.stat()
     if not resolved.is_file() or before.st_size <= 0:
@@ -71,28 +78,33 @@ def fingerprint_media(path: Path, *, media_id: str, storage_key: str) -> MediaFi
         after.st_mtime_ns,
     ):
         raise MediaFingerprintError("media changed while it was fingerprinted")
-    return MediaFingerprint(
+    ref = BuildMediaRef(
         media_id=media_id,
         storage_key=storage_key,
-        local_path=str(resolved),
         sha256=checksum,
-        file_size=before.st_size,
+        size=before.st_size,
         duration_us=round(duration * 1_000_000),
         width=int((video or {}).get("width") or 0),
         height=int((video or {}).get("height") or 0),
         video_codec=(video or {}).get("codec_name"),
         audio_codec=(audio or {}).get("codec_name"),
+        retention_class=(
+            retention_class
+            or ("transient_4h" if storage_key.startswith("temporary/") else "library")
+        ),
     )
+    return MaterializedMedia(ref=ref, local_path=resolved)
 
 
-def verify_media_fingerprint(fingerprint: MediaFingerprint) -> None:
-    path = Path(fingerprint.local_path)
+def verify_media_fingerprint(materialized: MaterializedMedia) -> None:
+    fingerprint = materialized.ref
+    path = materialized.local_path
     if not path.is_file() or path.is_symlink():
         raise MediaFingerprintError(
             f"source fingerprint target is unavailable: {fingerprint.media_id}"
         )
     info = path.stat()
-    if info.st_size != fingerprint.file_size or sha256_file(path) != fingerprint.sha256:
+    if info.st_size != fingerprint.size or sha256_file(path) != fingerprint.sha256:
         raise MediaFingerprintError(f"source fingerprint changed: {fingerprint.media_id}")
     if fingerprint.video_codec or fingerprint.audio_codec:
         payload = probe_json(path)

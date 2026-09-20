@@ -9,25 +9,71 @@ from unittest.mock import Mock
 from camcat.models import JobKind, JobStatus
 from camcat.rendering.fingerprint import MediaFingerprintError
 from camcat.rendering.verification import OutputVerificationError
-from camcat.repositories import JobRepository, redact_transient_document, sanitize_job_error
+from camcat.repositories import (
+    JobRepository,
+    _redact_patch_operation,
+    redact_transient_document,
+    sanitize_job_error,
+)
 from camcat.worker import FailureCategory, Worker, _failure_category
 
 
 def test_transient_redaction_removes_keys_transcripts_and_analysis() -> None:
     source = {
+        "schema": "camcat-editing-project/v2",
+        "project_id": "p",
+        "goal": "g",
         "title": "keep",
-        "source_media": [{"storage_key": "temporary/user/raw.mp4"}],
-        "source_segments": [{"transcript": "secret speech", "thumbnail_key": "temporary/t.jpg"}],
-        "clips": [{"origin": "source", "storage_key": "temporary/user/raw.mp4"}],
+        "canvas": {"width": 640, "height": 360, "fps_num": 30, "fps_den": 1},
+        "sources": [
+            {
+                "source_id": "user",
+                "origin": "user_upload",
+                "storage_key": "temporary/user/raw.mp4",
+                "retention_class": "transient_4h",
+                "metadata": {},
+            }
+        ],
+        "timeline": {
+            "tracks": [
+                {
+                    "type": "video",
+                    "track_id": "main",
+                    "name": "Main",
+                    "segments": [
+                        {
+                            "type": "video",
+                            "segment_id": "seg",
+                            "source_id": "user",
+                            "timeline_start_us": 0,
+                            "timeline_duration_us": 1000000,
+                            "source_start_us": 0,
+                            "source_duration_us": 1000000,
+                            "speed": 1,
+                            "transform": {},
+                            "reason": "",
+                            "evidence": [],
+                        }
+                    ],
+                }
+            ],
+            "transitions": [],
+        },
+        "speech_review": {"workflow": "", "items": []},
+        "metadata": {
+            "source_media": [{"storage_key": "temporary/user/raw.mp4"}],
+            "source_segments": [{"transcript": "secret speech"}],
+        },
     }
 
     redacted = redact_transient_document(source)
 
     assert redacted["title"] == "keep"
-    assert redacted["source_media"] == []
-    assert redacted["source_segments"] == []
-    assert redacted["clips"] == []
-    assert redacted["transient_source_status"] == "expired"
+    assert redacted["sources"] == []
+    assert redacted["timeline"]["tracks"][0]["segments"] == []
+    assert redacted["metadata"]["source_media"] == []
+    assert redacted["metadata"]["source_segments"] == []
+    assert redacted["metadata"]["transient_source_status"] == "expired"
 
 
 def test_public_job_error_never_exposes_traceback() -> None:
@@ -36,10 +82,25 @@ def test_public_job_error_never_exposes_traceback() -> None:
     assert "Traceback" not in error
 
 
-def test_worker_always_removes_job_directory(tmp_path: Path) -> None:
+def test_expired_audit_patch_does_not_retain_transient_storage_keys() -> None:
+    operation = {
+        "op": "add",
+        "path": "/sources/0",
+        "value": {"storage_key": "temporary/user/raw.mp4"},
+    }
+
+    assert _redact_patch_operation(operation) == {
+        "op": "add",
+        "path": "/sources/0",
+        "redacted": True,
+    }
+
+
+def test_failed_job_runtime_is_not_removed_before_ttl_cleanup(tmp_path: Path) -> None:
     worker = object.__new__(Worker)
     worker.settings = SimpleNamespace(runtime_dir=str(tmp_path))
-    job = SimpleNamespace(id="job-1", kind="unsupported", status=JobStatus.RUNNING)
+    job = SimpleNamespace(id="job-1", kind=JobKind.RENDER, status=JobStatus.RUNNING)
+    worker.render = Mock(side_effect=ValueError("render failed"))
     job_dir = tmp_path / "jobs" / "job-1"
     job_dir.mkdir(parents=True)
     (job_dir / "secret.mp4").write_bytes(b"secret")
@@ -47,7 +108,27 @@ def test_worker_always_removes_job_directory(tmp_path: Path) -> None:
     with suppress(ValueError):
         worker._execute_job(job, SimpleNamespace())
 
-    assert not job_dir.exists()
+    assert job_dir.exists()
+
+
+def test_render_failure_freezes_existing_evidence(tmp_path: Path) -> None:
+    worker = object.__new__(Worker)
+    worker.settings = SimpleNamespace(runtime_dir=str(tmp_path))
+    job = SimpleNamespace(
+        id="job-2",
+        status=JobStatus.FAILED,
+        checkpoint={"failure_category": "deterministic"},
+    )
+    job_dir = tmp_path / "jobs" / "job-2"
+    job_dir.mkdir(parents=True)
+    (job_dir / "renderer-command.json").write_text("[]")
+    (job_dir / "renderer-stderr.log").write_text("failure")
+
+    worker._freeze_render_failure(job, "render failed")
+
+    assert (job_dir / "failure.json").is_file()
+    assert (job_dir / "renderer-command.json").is_file()
+    assert (job_dir / "renderer-stderr.log").is_file()
 
 
 def test_retention_timestamp_is_timezone_aware() -> None:
