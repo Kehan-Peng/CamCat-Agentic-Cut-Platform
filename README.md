@@ -147,6 +147,8 @@ Docker 容器从项目 `.env` 读取 Host 和 Key；Bailian CLI 的 `~/.bailian/
 
 ## 开发者角落
 
+Agent 的有界纠错、断线恢复、草稿保存和版本冲突处理见 [可靠性说明](docs/agent-reliability.md)。文档也记录了进程重启恢复等尚未完成的生产化边界。
+
 开发环境固定为 Python 3.12：
 
 ```bash
