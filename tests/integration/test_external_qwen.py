@@ -91,3 +91,47 @@ def image_data_uri(path: Path) -> str:
     import base64
 
     return f"data:image/jpeg;base64,{base64.b64encode(path.read_bytes()).decode()}"
+
+
+def test_real_agent_finishes_after_browser_disconnect() -> None:
+    import json
+    import time
+
+    import httpx
+
+    with httpx.Client(
+        base_url=os.environ.get("CAMCAT_TEST_API_URL", "http://api:8000"), timeout=90
+    ) as client:
+        created = client.post("/api/v1/editing/sessions", json={"current_goal": "测试断线恢复"})
+        created.raise_for_status()
+        session = created.json()
+        session_id = session["editing_session_id"]
+        run_id = None
+        try:
+            with client.stream(
+                "POST",
+                f"/api/v1/editing/sessions/{session_id}/agent/stream",
+                json={"base_version": session["state_version"], "instruction": "只把标题改为夏日"},
+            ) as response:
+                response.raise_for_status()
+                for line in response.iter_lines():
+                    if line.startswith("data:"):
+                        run_id = json.loads(line[5:])["graph_run_id"]
+                        break
+            assert run_id
+            deadline = time.monotonic() + 90
+            while time.monotonic() < deadline:
+                response = client.get(f"/api/v1/graph-runs/{run_id}")
+                response.raise_for_status()
+                run = response.json()
+                if run["status"] == "succeeded":
+                    assert len(run["node_trace"]) == 3
+                    updated = client.get(f"/api/v1/editing/sessions/{session_id}").json()
+                    assert updated["state_version"] == session["state_version"] + 1
+                    assert updated["state"]["title"]
+                    return
+                assert run["status"] not in ("failed", "dead_letter"), run.get("error")
+                time.sleep(0.5)
+            pytest.fail("Disconnected agent did not finish within 90 seconds")
+        finally:
+            client.delete(f"/api/v1/editing/sessions/{session_id}")

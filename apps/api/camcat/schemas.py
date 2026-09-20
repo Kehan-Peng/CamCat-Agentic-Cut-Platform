@@ -153,6 +153,7 @@ class RenderRequest(BaseModel):
         None
     )
     burn_subtitles: bool = True
+    fps: Literal[24, 25, 30, 50, 60] = 30
 
 
 class ImportOpenMediaRequest(BaseModel):

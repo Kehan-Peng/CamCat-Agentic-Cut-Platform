@@ -109,7 +109,8 @@ class RetrievalService:
                         )
                     )
 
-            fused = fuse_candidates(routes, self.fusion_config)[:candidate_limit]
+            rerank_limit = min(candidate_limit, max(8, top_k * 2))
+            fused = fuse_candidates(routes, self.fusion_config)[:rerank_limit]
             if not fused:
                 return []
             query: dict[str, Any] = {"text": query_text or ""}
@@ -139,9 +140,10 @@ class RetrievalService:
             # Bailian qwen3-vl-rerank accepts at most four video documents in one
             # request. Keep every candidate visual by batching instead of silently
             # degrading overflow candidates to text-only ranking.
-            reranker_scores: list[float] = []
-            for start in range(0, len(documents), 4):
-                reranker_scores.extend(self.reranker.rerank(query, documents[start : start + 4]))
+            batches = [documents[start : start + 4] for start in range(0, len(documents), 4)]
+            with ThreadPoolExecutor(max_workers=2, thread_name_prefix="camcat-rerank") as pool:
+                futures = [pool.submit(self.reranker.rerank, query, batch) for batch in batches]
+                reranker_scores = [score for future in futures for score in future.result()]
             ranked = [
                 RankedMaterial(
                     segment_id=item.segment_id,

@@ -394,17 +394,32 @@ class JobRepository:
         job.lease_expires_at = None
         self.db.commit()
 
-    def fail(self, job: Job, error: str) -> None:
+    def fail(
+        self,
+        job: Job,
+        error: str,
+        *,
+        retryable: bool = True,
+        category: str | None = None,
+    ) -> None:
         now = utcnow()
         job.error = error[:1000]
         job.worker_id = None
         job.lease_expires_at = None
+        if category:
+            checkpoint = dict(job.checkpoint or {})
+            checkpoint["failure_category"] = category
+            checkpoint["failed_at"] = now.isoformat()
+            job.checkpoint = checkpoint
         if job.cancel_requested_at is not None:
             job.status = JobStatus.CANCELLED
             job.finished_at = now
-        elif job.attempts < job.max_attempts:
+        elif retryable and job.attempts < job.max_attempts:
             job.status = JobStatus.QUEUED
             job.available_at = now + timedelta(seconds=min(300, 2**job.attempts))
+        elif not retryable:
+            job.status = JobStatus.FAILED
+            job.finished_at = now
         else:
             job.status = JobStatus.DEAD_LETTER
             job.finished_at = now

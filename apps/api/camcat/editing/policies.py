@@ -114,17 +114,15 @@ def enforce_timeline_policy(
         ):
             ordered.append(item)
 
-    cursor = 0.0
     result: list[dict[str, Any]] = []
     for index, item in enumerate(ordered):
         duration = _duration(item)
         if duration <= 0:
             continue
         item["clip_id"] = str(item.get("clip_id") or f"clip-{index + 1}")
-        item["output_start"] = cursor
-        item["output_end"] = cursor + duration
-        cursor += duration
         result.append(item)
+    if result:
+        result[-1]["transition"] = "cut"
     return result
 
 

@@ -171,6 +171,19 @@ class QwenChatClient(_ProviderClient):
         self.model = settings.llm_model
 
     def json_completion(self, *, system: str, user: str) -> dict[str, Any]:
+        for attempt in range(2):
+            try:
+                return self._json_completion_once(system=system, user=user)
+            except ProviderError as exc:
+                if str(exc) != "LLM did not return valid structured JSON" or attempt == 1:
+                    raise
+                system += (
+                    " Your previous response was not valid JSON. Return a JSON object only. "
+                    "Do not use markdown fences or literal backslash-n outside string values."
+                )
+        raise AssertionError("unreachable")
+
+    def _json_completion_once(self, *, system: str, user: str) -> dict[str, Any]:
         payload = self.request(
             "POST",
             "/v1/chat/completions",
@@ -279,7 +292,7 @@ def parse_structured_content(content: str) -> dict[str, Any]:
             lines = lines[:-1]
         normalized = "\n".join(lines).strip()
     try:
-        result = json.loads(normalized)
+        result = json.loads(_normalize_json_whitespace(normalized))
     except json.JSONDecodeError as exc:
         raise ValueError("model response is not JSON") from exc
     if isinstance(result, dict):
@@ -287,3 +300,29 @@ def parse_structured_content(content: str) -> dict[str, Any]:
     if isinstance(result, list):
         return {"items": result}
     raise ValueError("model JSON must be an object or array")
+
+
+def _normalize_json_whitespace(content: str) -> str:
+    """Repair escaped formatting whitespace without changing any JSON string value."""
+    output: list[str] = []
+    in_string = False
+    escaped = False
+    index = 0
+    while index < len(content):
+        char = content[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+        elif char == "\\" and content[index : index + 2] in (r"\n", r"\r", r"\t"):
+            output.append(" ")
+            index += 2
+            continue
+        output.append(char)
+        index += 1
+    return "".join(output)

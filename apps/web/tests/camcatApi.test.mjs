@@ -12,6 +12,49 @@ async function loadApiModule() {
   return import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
 }
 
+test("API conflict keeps structured version details for recovery", async () => {
+  const { createCamCatApiClient } = await loadApiModule();
+  const client = createCamCatApiClient({baseUrl: "", userId: "u", fetchImpl: async () =>
+    response({code: "version_conflict", message: "conflict", details: {current_version: 4}, request_id: "r1"}, {status: 409})});
+  await assert.rejects(() => client.getEditingSession("s"), error => {
+    assert.equal(error.status, 409);
+    assert.equal(error.details.current_version, 4);
+    assert.equal(error.requestId, "r1");
+    return true;
+  });
+});
+
+test("job polling recovers from a temporary network failure", async () => {
+  const { waitForJob } = await loadApiModule();
+  let calls = 0;
+  const job = await waitForJob(async () => {
+    if (++calls < 3) throw new TypeError("Failed to fetch");
+    return {job_id: "j", status: "succeeded"};
+  }, "j", {intervalMs: 0});
+  assert.equal(calls, 3);
+  assert.equal(job.status, "succeeded");
+});
+
+test("job polling stops after three network errors", async () => {
+  const { waitForJob } = await loadApiModule();
+  let calls = 0;
+  await assert.rejects(() => waitForJob(async () => {
+    calls++; throw new TypeError("Failed to fetch");
+  }, "j", {intervalMs: 0}));
+  assert.equal(calls, 3);
+});
+
+test("a newly created session is retained when its first agent request fails", async () => {
+  const { runSearchAndPlan } = await loadApiModule();
+  const session = {editing_session_id: "s", state_version: 1};
+  let retained;
+  await assert.rejects(() => runSearchAndPlan({
+    createEditingSession: async () => session,
+    runEditingAgentStream: async () => { throw new Error("provider unavailable"); },
+  }, {query: "剪辑", sourceJobId: "j", onSessionCreated: value => { retained = value; }}));
+  assert.equal(retained, session);
+});
+
 function response(body, init = {}) {
   return new Response(JSON.stringify(body), {
     status: 200,
